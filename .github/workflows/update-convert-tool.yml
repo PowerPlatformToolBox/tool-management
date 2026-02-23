@@ -361,12 +361,17 @@ jobs:
               run: |
                   FOLDER="${TOOL_ID}-${TOOL_VERSION}"
 
-                  # Prepare icon and download URLs (Azure Blob)
+                  # Prepare icon and download URLs
                   ICON_URL=""
                   if [ "${{ steps.icon.outputs.has_icon }}" = "true" ]; then
                     ICON_URL="https://${{ secrets.AZURE_STORAGE_ACCOUNT }}.blob.core.windows.net/${{ secrets.AZURE_STORAGE_CONTAINER }}/packages/${FOLDER}/${{ steps.icon.outputs.filename }}"
                   fi
-                  DOWNLOAD_URL="https://${{ secrets.AZURE_STORAGE_ACCOUNT }}.blob.core.windows.net/${{ secrets.AZURE_STORAGE_CONTAINER }}/packages/${FOLDER}/${FOLDER}.tar.gz"
+
+                  # Azure Blob (preferred distribution)
+                  BLOB_DOWNLOAD_URL="https://${{ secrets.AZURE_STORAGE_ACCOUNT }}.blob.core.windows.net/${{ secrets.AZURE_STORAGE_CONTAINER }}/packages/${FOLDER}/${FOLDER}.tar.gz"
+
+                  # GitHub Release (deprecated distribution, hosted in PowerPlatformToolBox/pptb-web)
+                  GH_RELEASE_DOWNLOAD_URL="https://github.com/PowerPlatformToolBox/pptb-web/releases/download/${FOLDER}/${FOLDER}.tar.gz"
 
                   # Prepare SQL payload for tools table
                   TOOL_PAYLOAD=$(jq -n \
@@ -376,7 +381,11 @@ jobs:
                     --arg description "${{ steps.metadata.outputs.description }}" \
                     --arg readmeurl "${{ steps.metadata.outputs.readme_url }}" \
                     --arg license "${{ steps.metadata.outputs.license }}" \
-                    --arg downloadurl "$DOWNLOAD_URL" \
+                    # Supabase tools table mapping:
+                    # - downloadurl: GitHub Release URL
+                    # - download: Azure Blob URL
+                    --arg downloadurl "$GH_RELEASE_DOWNLOAD_URL" \
+                    --arg download "$BLOB_DOWNLOAD_URL" \
                     --arg icon "$ICON_URL" \
                     --arg published "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
                     --arg checksum "${{ steps.checksum.outputs.checksum }}" \
@@ -390,6 +399,7 @@ jobs:
                       description: $description,
                       readmeurl: $readmeurl,
                       license: $license,
+                      download: $download,
                       downloadurl: $downloadurl,
                       icon: (if $icon == "" then null else $icon end),
                       published_at: $published,

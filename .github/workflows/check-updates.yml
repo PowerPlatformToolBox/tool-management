@@ -163,33 +163,20 @@ jobs:
                     fi
                     PAYLOAD=$(jq -c -n --arg packageName "$PACKAGE" --arg toolUpdateId "$TOOL_UPDATES_ID" '{packageName: $packageName, toolUpdateId: $toolUpdateId}')
 
-                    echo "Notifying update API for $PACKAGE (tool_update_id=$TOOL_UPDATES_ID)"
+                    echo "Queuing update API notification for $PACKAGE (tool_update_id=$TOOL_UPDATES_ID)"
 
-                    HEADERS_FILE=$(mktemp)
-                    BODY_FILE=$(mktemp)
-
-                    HTTP_CODE=$(curl -sS -L --post301 --post302 --post303 -X POST "$UPDATE_TOOL_API_URL" \
+                    # Fire-and-forget: do not wait for the HTTP response.
+                    # Notes:
+                    # - We still set small timeouts to avoid hangs if DNS/TLS stalls.
+                    # - Output is discarded to keep logs clean.
+                    nohup curl -sS -L --post301 --post302 --post303 \
+                      --connect-timeout 5 \
+                      --max-time 15 \
+                      -X POST "$UPDATE_TOOL_API_URL" \
                       -H "Content-Type: application/json" \
                       -d "$PAYLOAD" \
-                      -D "$HEADERS_FILE" \
-                      -o "$BODY_FILE" \
-                      -w "%{http_code}")
-
-                    if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
-                      echo "❌ Update API call failed for $PACKAGE (HTTP $HTTP_CODE)"
-                      echo "--- Response headers ---"
-                      cat "$HEADERS_FILE" || true
-                      echo "--- Response body (first 2000 bytes) ---"
-                      head -c 2000 "$BODY_FILE" || true
-                      echo
-                      rm -f "$HEADERS_FILE" "$BODY_FILE"
-                      exit 1
-                    fi
-
-                    LOCATION=$(grep -i '^location:' "$HEADERS_FILE" | tail -n 1 | sed -E 's/^location:[[:space:]]*//I' || true)
-                    if [ -n "$LOCATION" ]; then
-                      echo "ℹ️ Followed redirect to: $LOCATION"
-                    fi
-
-                    rm -f "$HEADERS_FILE" "$BODY_FILE"
+                      >/dev/null 2>&1 &
                   done < tool_update_ids.txt
+
+                  # Give background curls a moment to start before the step exits.
+                  sleep 5
