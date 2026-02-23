@@ -88,7 +88,7 @@ jobs:
                   SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
                   SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
               run: |
-                  # Remove any stale mapping file so only new entries trigger the API
+                  # Remove any stale mapping file so this run controls what gets processed
                   rm -f tool_update_ids.txt
                   while IFS=',' read -r PACKAGE CURRENT_VERSION LATEST_VERSION; do
                     if [ -z "$PACKAGE" ]; then
@@ -106,7 +106,13 @@ jobs:
                       -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY")
 
                     if echo "$EXISTING_RESPONSE" | jq -e 'type == "array" and length > 0' > /dev/null 2>&1; then
-                      echo "Skipping tool_updates creation for $PACKAGE@$LATEST_VERSION - record already exists."
+                      EXISTING_ID=$(echo "$EXISTING_RESPONSE" | jq -r '.[0].id // empty')
+                      if [ -n "$EXISTING_ID" ]; then
+                        echo "tool_updates already exists for $PACKAGE@$LATEST_VERSION (id=$EXISTING_ID); enqueueing for processing."
+                        echo "$PACKAGE,$EXISTING_ID" >> tool_update_ids.txt
+                      else
+                        echo "Warning: tool_updates exists for $PACKAGE@$LATEST_VERSION but no id was returned; skipping enqueue."
+                      fi
                       continue
                     fi
 
