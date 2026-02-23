@@ -1,0 +1,273 @@
+# This workflow automatically cleans up old releases to maintain a manageable number of releases per tool.
+#
+# NOTE: Releases are being deprecated in favor of Azure Blob Storage. In deletion mode, this workflow also
+# deletes the corresponding blobs under: packages/<release-tag>/*
+#
+# Purpose:
+# - Fetches all releases from the repository
+# - Groups releases by tool name (e.g., "HTML Sample Tool", "PCF Builder", "Data Migrator")
+# - Keeps only the top N most recent releases for each tool (configurable)
+# - Deletes older releases automatically
+#
+# Release Name Format:
+# - Positive matches: "HTML Sample Tool v0.0.1", "HTML Sample Tool v0.0.2"
+# - These are grouped as "HTML Sample Tool" and the newest N are kept (see keep_count)
+# - Negative matches (different tools): "PCF Builder v0.0.1", "Data Migrator v0.0.1"
+# - Each tool is handled separately
+#
+# Features:
+# - Scheduled: Runs weekly on Sundays at 00:00 UTC
+# - Manual trigger: Can be run manually via workflow_dispatch
+# - Dry-run mode: Default mode that shows what would be deleted without actually deleting
+# - Delete mode: Set dry_run to 'false' to actually delete old releases
+#
+# Usage:
+# 1. By default (scheduled or manual), runs in DRY RUN mode - safe to test
+# 2. To actually delete releases, manually trigger with dry_run='false'
+# 3. Review the workflow logs to see what will be deleted before running in delete mode
+#
+name: Cleanup Old Releases
+
+on:
+    schedule:
+        # Run weekly on Sundays at 00:00 UTC
+        - cron: "0 0 * * 0"
+    workflow_dispatch:
+        inputs:
+            dry_run:
+                description: "Dry run mode (true to only show what would be deleted, false to actually delete)"
+                required: false
+                default: "true"
+                type: choice
+                options:
+                    - "true"
+                    - "false"
+            keep_count:
+                description: "How many releases to keep per tool"
+                required: false
+                default: "3"
+                type: string
+
+jobs:
+    cleanup-releases:
+        runs-on: ubuntu-latest
+        permissions:
+            contents: write
+
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v4
+
+            - name: Setup Node.js
+              uses: actions/setup-node@v4
+              with:
+                  node-version: "20"
+
+            - name: Analyze releases
+              id: analyze
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                  DRY_RUN: ${{ github.event.inputs.dry_run || 'true' }}
+                  KEEP_COUNT: ${{ github.event.inputs.keep_count || '3' }}
+              run: |
+                  set -e
+
+                  echo "==================================="
+                  echo "Release Cleanup Workflow"
+                  echo "==================================="
+                  echo "Dry Run Mode: $DRY_RUN"
+                  echo "Keep Count: $KEEP_COUNT"
+                  echo ""
+
+                  if ! echo "$KEEP_COUNT" | grep -Eq '^[0-9]+$'; then
+                    echo "❌ Invalid keep_count: '$KEEP_COUNT' (must be a positive integer)"
+                    exit 1
+                  fi
+                  if [ "$KEEP_COUNT" -lt 1 ]; then
+                    echo "❌ Invalid keep_count: '$KEEP_COUNT' (must be >= 1)"
+                    exit 1
+                  fi
+
+                  # Fetch all releases
+                  echo "📥 Fetching all releases..."
+                  gh release list --limit 1000 --json tagName,name,publishedAt,createdAt > releases.json
+
+                  RELEASE_COUNT=$(jq 'length' releases.json)
+                  echo "Found $RELEASE_COUNT total releases"
+                  echo ""
+
+                  if [ "$RELEASE_COUNT" -eq 0 ]; then
+                    echo "✅ No releases found. Nothing to clean up."
+                    exit 0
+                  fi
+
+                  # Parse releases and group by tool name
+                  # Release name format: "Tool Name v0.0.1" or "Tool Name v1.2.3"
+                  # We need to extract the tool name (everything before " v")
+
+                  echo "🔍 Analyzing releases and grouping by tool..."
+
+                  # Create a list of tools with their releases
+                  jq -r '.[] | "\(.name)|\(.tagName)|\(.publishedAt // .createdAt // "1970-01-01T00:00:00Z")"' releases.json | while IFS='|' read -r name tag published; do
+                    # Use tag as fallback when the release name is empty/null so grouping still works
+                    display_name="$name"
+                    if [ -z "$display_name" ] || [ "$display_name" = "null" ]; then
+                      display_name="$tag"
+                    fi
+                    if [ -z "$display_name" ]; then
+                      display_name="Unknown Release"
+                    fi
+                    # Extract tool name by removing version pattern (v followed by numbers and dots)
+                    # Match patterns like " v0.0.1", " v1.2.3", etc.
+                    tool_name=$(echo "$display_name" | sed -E 's/ v[0-9]+\.[0-9]+\.[0-9]+.*$//')
+                    
+                    # If tool_name is empty or same as name, it might not match our pattern
+                    if [ -z "$tool_name" ] || [ "$tool_name" = "$display_name" ]; then
+                      # Try alternative pattern: remove everything after last space if it starts with v
+                      if echo "$display_name" | grep -qE ' v[0-9]'; then
+                        tool_name=$(echo "$display_name" | sed -E 's/ v[0-9].*$//')
+                      else
+                        tool_name="$display_name"
+                      fi
+                    fi
+                    if [ -z "$tool_name" ]; then
+                      tool_name="Unknown Tool"
+                    fi
+                    
+                    echo "$tool_name|$display_name|$tag|$published"
+                  done | sort > releases_with_tools.txt
+
+                  # Get unique tool names
+                  cut -d'|' -f1 releases_with_tools.txt | sort -u > unique_tools.txt
+
+                  TOOL_COUNT=$(wc -l < unique_tools.txt)
+                  echo "Identified $TOOL_COUNT unique tools"
+                  echo ""
+
+                  # For each tool, find releases to delete (all but top 3)
+                  echo "📊 Analysis by Tool:"
+                  echo "===================="
+
+                  # Clear the delete list file
+                  > releases_to_delete.txt
+
+                  while read -r tool_name; do
+                    echo ""
+                    echo "Tool: $tool_name"
+                    
+                    # Get all releases for this tool, sorted by date (newest first)
+                    # Use grep -F for fixed string matching to avoid regex metacharacter issues
+                    grep -F "$tool_name|" releases_with_tools.txt | sort -t'|' -k4 -r > tool_releases.txt
+                    
+                    release_count=$(wc -l < tool_releases.txt)
+                    echo "  Total releases: $release_count"
+                    
+                    if [ "$release_count" -le "$KEEP_COUNT" ]; then
+                      echo "  ✅ Keeping all $release_count releases (≤ $KEEP_COUNT)"
+                    else
+                      delete_count=$((release_count - KEEP_COUNT))
+                      echo "  ⚠️  Will delete $delete_count old releases (keeping newest $KEEP_COUNT)"
+                      
+                      # Show what we're keeping
+                      echo "  📌 Keeping:"
+                      head -n "$KEEP_COUNT" tool_releases.txt | while IFS='|' read -r tn rname rtag rpub; do
+                        echo "     - $rname (published: $rpub)"
+                      done
+                      
+                      # Show what we're deleting
+                      echo "  🗑️  Marking for deletion:"
+                      delete_start=$((KEEP_COUNT + 1))
+                      tail -n +"$delete_start" tool_releases.txt | while IFS='|' read -r tn rname rtag rpub; do
+                        echo "     - $rname (published: $rpub)"
+                        # Append to file instead of variable to avoid subshell issues
+                        echo "$rtag|$rname" >> releases_to_delete.txt
+                      done
+                    fi
+                  done < unique_tools.txt
+
+                  # Count releases to delete
+                  if [ -s releases_to_delete.txt ]; then
+                    DELETE_COUNT=$(wc -l < releases_to_delete.txt)
+                  else
+                    DELETE_COUNT=0
+                  fi
+
+                  echo "delete_count=$DELETE_COUNT" >> $GITHUB_OUTPUT
+                  echo "dry_run=$DRY_RUN" >> $GITHUB_OUTPUT
+
+                  echo ""
+                  echo "==================================="
+                  echo "Summary"
+                  echo "==================================="
+                  echo "Total releases: $RELEASE_COUNT"
+                  echo "Unique tools: $TOOL_COUNT"
+                  echo "Releases to delete: $DELETE_COUNT"
+                  echo ""
+
+                  if [ "$DELETE_COUNT" -eq 0 ]; then
+                    echo "✅ Nothing to delete. All tools have ≤ 3 releases."
+                    exit 0
+                  fi
+
+                  if [ "$DRY_RUN" = "true" ]; then
+                    echo "🔍 DRY RUN MODE - No releases will be deleted"
+                    echo ""
+                    echo "To actually delete these releases, run this workflow again with dry_run=false"
+                    exit 0
+                  fi
+
+            - name: Login to Azure
+              if: ${{ steps.analyze.outputs.dry_run == 'false' && steps.analyze.outputs.delete_count != '0' }}
+              uses: azure/login@v2
+              with:
+                  creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+            - name: Delete GitHub Releases and Azure blobs
+              if: ${{ steps.analyze.outputs.dry_run == 'false' && steps.analyze.outputs.delete_count != '0' }}
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                  AZURE_STORAGE_ACCOUNT: ${{ secrets.AZURE_STORAGE_ACCOUNT }}
+                  AZURE_STORAGE_CONTAINER: ${{ secrets.AZURE_STORAGE_CONTAINER }}
+              run: |
+                  set -euo pipefail
+
+                  if [ -z "${AZURE_STORAGE_ACCOUNT}" ] || [ -z "${AZURE_STORAGE_CONTAINER}" ]; then
+                    echo "❌ Azure Storage secrets are required in deletion mode: AZURE_STORAGE_ACCOUNT and AZURE_STORAGE_CONTAINER"
+                    exit 1
+                  fi
+                  if [ ! -f releases_to_delete.txt ]; then
+                    echo "❌ releases_to_delete.txt not found; aborting deletion"
+                    exit 1
+                  fi
+
+                  echo "⚠️  DELETION MODE - Deleting GitHub releases and Azure blobs..."
+                  echo ""
+
+                  while IFS='|' read -r rtag rname; do
+                    if [ -z "${rtag}" ]; then
+                      continue
+                    fi
+
+                    echo "Deleting GitHub Release: ${rname} (${rtag})"
+                    if gh release delete "${rtag}" --yes --cleanup-tag 2>&1; then
+                      echo "  ✅ Release deleted"
+                    else
+                      echo "  ❌ Failed to delete release (continuing)"
+                    fi
+
+                    echo "Deleting Azure blobs: packages/${rtag}/*"
+                    if az storage blob delete-batch \
+                      --account-name "${AZURE_STORAGE_ACCOUNT}" \
+                      --source "${AZURE_STORAGE_CONTAINER}" \
+                      --pattern "packages/${rtag}/*" \
+                      --auth-mode login \
+                      --delete-snapshots include \
+                      --only-show-errors; then
+                      echo "  ✅ Blobs deleted"
+                    else
+                      echo "  ❌ Failed to delete blobs for ${rtag} (continuing)"
+                    fi
+                  done < releases_to_delete.txt
+
+                  echo ""
+                  echo "✅ Cleanup complete!"
