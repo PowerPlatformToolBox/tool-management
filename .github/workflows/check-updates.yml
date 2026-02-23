@@ -141,6 +141,7 @@ jobs:
               env:
                   UPDATE_TOOL_API_URL: ${{ secrets.UPDATE_TOOL_API_URL }}
               run: |
+                  set -euo pipefail
                   if [ -z "$UPDATE_TOOL_API_URL" ]; then
                     echo "❌ Secret UPDATE_TOOL_API_URL is not set."
                     exit 1
@@ -154,7 +155,35 @@ jobs:
                     if [ -z "$PACKAGE" ] || [ -z "$TOOL_UPDATES_ID" ]; then
                       continue
                     fi
-                    curl -sS -X POST "${{ secrets.UPDATE_TOOL_API_URL }}" \
+                    PAYLOAD=$(jq -c -n --arg packageName "$PACKAGE" --arg toolUpdateId "$TOOL_UPDATES_ID" '{packageName: $packageName, toolUpdateId: $toolUpdateId}')
+
+                    echo "Notifying update API for $PACKAGE (tool_update_id=$TOOL_UPDATES_ID)"
+
+                    HEADERS_FILE=$(mktemp)
+                    BODY_FILE=$(mktemp)
+
+                    HTTP_CODE=$(curl -sS -L --post301 --post302 --post303 -X POST "$UPDATE_TOOL_API_URL" \
                       -H "Content-Type: application/json" \
-                      -d "{\"packageName\":\"$PACKAGE\",\"toolUpdateId\":\"$TOOL_UPDATES_ID\"}"
+                      -d "$PAYLOAD" \
+                      -D "$HEADERS_FILE" \
+                      -o "$BODY_FILE" \
+                      -w "%{http_code}")
+
+                    if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
+                      echo "❌ Update API call failed for $PACKAGE (HTTP $HTTP_CODE)"
+                      echo "--- Response headers ---"
+                      cat "$HEADERS_FILE" || true
+                      echo "--- Response body (first 2000 bytes) ---"
+                      head -c 2000 "$BODY_FILE" || true
+                      echo
+                      rm -f "$HEADERS_FILE" "$BODY_FILE"
+                      exit 1
+                    fi
+
+                    LOCATION=$(grep -i '^location:' "$HEADERS_FILE" | tail -n 1 | sed -E 's/^location:[[:space:]]*//I' || true)
+                    if [ -n "$LOCATION" ]; then
+                      echo "ℹ️ Followed redirect to: $LOCATION"
+                    fi
+
+                    rm -f "$HEADERS_FILE" "$BODY_FILE"
                   done < tool_update_ids.txt

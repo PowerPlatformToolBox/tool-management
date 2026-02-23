@@ -247,7 +247,12 @@ jobs:
               id: upload
               uses: softprops/action-gh-release@v1
               with:
+                  # Cross-repo release: requires a PAT with access to PowerPlatformToolBox/pptb-web
+                  # (GITHUB_TOKEN is scoped to the current repository only).
+                  repository: PowerPlatformToolBox/pptb-web
+                  token: ${{ secrets.GH_PAT_TOKEN }}
                   tag_name: ${{ steps.metadata.outputs.id }}-${{ inputs.version }}
+                  target_commitish: main
                   name: ${{ steps.metadata.outputs.name }} v${{ inputs.version }}
                   body: |
                       ⚠️ DEPRECATED: GitHub Releases are being phased out in favor of Azure Blob Storage.

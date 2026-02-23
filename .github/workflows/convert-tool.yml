@@ -273,15 +273,20 @@ jobs:
               id: upload_gh_release
               uses: softprops/action-gh-release@v1
               with:
-                  tag_name: ${{ env.TOOL_ID }}-${{ env.TOOL_VERSION }}
-                  name: ${{ steps.tool.outputs.name }} v${{ env.TOOL_VERSION }}
+                  # Cross-repo release: requires a PAT with access to PowerPlatformToolBox/pptb-web
+                  # (GITHUB_TOKEN is scoped to the current repository only).
+                  repository: PowerPlatformToolBox/pptb-web
+                  token: ${{ secrets.GH_PAT_TOKEN }}
+                  tag_name: ${{ steps.build.outputs.id }}-${{ steps.build.outputs.version }}
+                  target_commitish: main
+                  name: ${{ steps.tool.outputs.name }} v${{ steps.build.outputs.version }}
                   body: |
                       ⚠️ DEPRECATED: GitHub Releases are being phased out in favor of Azure Blob Storage.
                       TODO: Remove this GitHub Release step after 2-3 releases.
 
                       Tool: ${{ steps.tool.outputs.name }}
                       npm package: ${{ steps.tool.outputs.package }}
-                      Version: ${{ env.TOOL_VERSION }}
+                      Version: ${{ steps.build.outputs.version }}
                       Authors: ${{ steps.tool.outputs.authors }}
                   files: ${{ steps.release_files.outputs.files }}
 
