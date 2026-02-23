@@ -359,6 +359,12 @@ jobs:
                   SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
               if: env.SUPABASE_URL != '' && env.SUPABASE_SERVICE_ROLE_KEY != ''
               run: |
+                  set -euo pipefail
+
+                  # Ensure required tools exist (exit 127 indicates command-not-found)
+                  command -v curl >/dev/null 2>&1 || (sudo apt-get update && sudo apt-get install -y curl)
+                  command -v jq >/dev/null 2>&1 || (sudo apt-get update && sudo apt-get install -y jq)
+
                   FOLDER="${TOOL_ID}-${TOOL_VERSION}"
 
                   # Prepare icon and download URLs
@@ -381,9 +387,6 @@ jobs:
                     --arg description "${{ steps.metadata.outputs.description }}" \
                     --arg readmeurl "${{ steps.metadata.outputs.readme_url }}" \
                     --arg license "${{ steps.metadata.outputs.license }}" \
-                    # Supabase tools table mapping:
-                    # - downloadurl: GitHub Release URL
-                    # - download: Azure Blob URL
                     --arg downloadurl "$GH_RELEASE_DOWNLOAD_URL" \
                     --arg download "$BLOB_DOWNLOAD_URL" \
                     --arg icon "$ICON_URL" \
