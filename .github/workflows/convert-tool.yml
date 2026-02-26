@@ -15,10 +15,6 @@ on:
                 description: "Tool description"
                 required: true
                 type: string
-            icon_url:
-                description: "Icon URL (deprecated - use icon field)"
-                required: false
-                type: string
             icon:
                 description: "Icon path (bundled SVG under dist)"
                 required: false
@@ -86,7 +82,6 @@ jobs:
                   DESCRIPTION='${{ inputs.description }}'
                   AUTHORS='${{ inputs.authors }}'
                   README_URL='${{ inputs.readme_url }}'
-                  ICON_URL='${{ inputs.icon_url }}'
                   ICON='${{ inputs.icon }}'
                   REPOSITORY='${{ inputs.repository }}'
                   WEBSITE='${{ inputs.website }}'
@@ -96,7 +91,6 @@ jobs:
                   echo "description=$DESCRIPTION" >> $GITHUB_OUTPUT
                   echo "authors=$AUTHORS" >> $GITHUB_OUTPUT
                   echo "readme_url=$README_URL" >> $GITHUB_OUTPUT
-                  echo "icon_url=$ICON_URL" >> $GITHUB_OUTPUT
                   echo "icon=$ICON" >> $GITHUB_OUTPUT
                   echo "repository=$REPOSITORY" >> $GITHUB_OUTPUT
                   echo "website=$WEBSITE" >> $GITHUB_OUTPUT
@@ -161,12 +155,10 @@ jobs:
 
             - name: Extract or download icon
               id: icon
-              if: ${{ steps.tool.outputs.icon != '' || steps.tool.outputs.icon_url != '' }}
+              if: ${{ steps.tool.outputs.icon != '' }}
               run: |
                   ICON="${{ steps.tool.outputs.icon }}"
-                  ICON_URL="${{ steps.tool.outputs.icon_url }}"
 
-                  # Prefer bundled icon over external URL
                   if [ -n "$ICON" ]; then
                     echo "Using bundled icon: $ICON"
                     
@@ -186,41 +178,6 @@ jobs:
                       echo "icon_path=$ICON" >> $GITHUB_OUTPUT
                     else
                       echo "⚠️ Bundled icon not found at package/dist/$ICON"
-                      echo "has_icon=false" >> $GITHUB_OUTPUT
-                    fi
-                  elif [ -n "$ICON_URL" ]; then
-                    echo "Using external icon URL (deprecated): $ICON_URL"
-
-                    # Extract file extension from URL
-                    EXTENSION="${ICON_URL##*.}"
-                    # Remove query parameters if any
-                    EXTENSION="${EXTENSION%%\?*}"
-                    # Convert to lowercase for validation
-                    EXTENSION=$(echo "$EXTENSION" | tr '[:upper:]' '[:lower:]')
-
-                    # Validate extension against supported formats using case statement
-                    case "$EXTENSION" in
-                      png|jpg|jpeg|svg)
-                        echo "✅ Valid icon format: $EXTENSION"
-                        ;;
-                      *)
-                        echo "⚠️ Invalid or unsupported icon format: $EXTENSION"
-                        echo "Supported formats: $SUPPORTED_ICON_FORMATS"
-                        echo "Defaulting to png"
-                        EXTENSION="png"
-                        ;;
-                    esac
-
-                    # Determine icon filename
-                    ICON_FILENAME="${{ steps.build.outputs.id }}-${{ steps.build.outputs.version }}-icon.${EXTENSION}"
-
-                    echo "Downloading icon from: $ICON_URL"
-                    if curl -L -f -o "$ICON_FILENAME" "$ICON_URL"; then
-                      echo "✅ Icon downloaded successfully"
-                      echo "filename=$ICON_FILENAME" >> $GITHUB_OUTPUT
-                      echo "has_icon=true" >> $GITHUB_OUTPUT
-                    else
-                      echo "⚠️ Failed to download icon, continuing without it"
                       echo "has_icon=false" >> $GITHUB_OUTPUT
                     fi
                   fi
