@@ -186,8 +186,6 @@ jobs:
                       --overwrite true
                   fi
 
-            # TODO(deprecation): Remove GitHub Release uploads after 2-3 releases once consumers have migrated to Azure Blob.
-
             - name: Prepare release files
               id: release_files
               run: |
@@ -201,48 +199,6 @@ jobs:
                   echo "files<<EOF" >> $GITHUB_OUTPUT
                   echo "$FILES" >> $GITHUB_OUTPUT
                   echo "EOF" >> $GITHUB_OUTPUT
-
-            - name: Validate GitHub token can access target repo
-              run: |
-                  set -euo pipefail
-
-                  # This helps turn opaque 403s into actionable errors (bad credentials, missing perms, SSO not authorized, etc.).
-                  STATUS=$(curl -sS -o /tmp/gh_repo_check.json -w "%{http_code}" \
-                    -H "Authorization: Bearer ${{ secrets.GH_PAT_TOKEN }}" \
-                    -H "Accept: application/vnd.github+json" \
-                    https://api.github.com/repos/PowerPlatformToolBox/pptb-web)
-
-                  if [ "$STATUS" != "200" ]; then
-                    echo "GitHub API access check failed (HTTP $STATUS) for PowerPlatformToolBox/pptb-web"
-                    cat /tmp/gh_repo_check.json
-                    exit 1
-                  fi
-
-            - name: Upload to GitHub Release
-              id: upload
-              uses: softprops/action-gh-release@v1
-              env:
-                  # Some actions default to GITHUB_TOKEN env var even when a `token` input is provided.
-                  # Force usage of the PAT for cross-repo release creation.
-                  GITHUB_TOKEN: ${{ secrets.GH_PAT_TOKEN }}
-              with:
-                  # Cross-repo release: requires a PAT with access to PowerPlatformToolBox/pptb-web
-                  # (GITHUB_TOKEN is scoped to the current repository only).
-                  repository: PowerPlatformToolBox/pptb-web
-                  token: ${{ secrets.GH_PAT_TOKEN }}
-                  tag_name: ${{ steps.metadata.outputs.id }}-${{ inputs.version }}
-                  target_commitish: main
-                  name: ${{ steps.metadata.outputs.name }} v${{ inputs.version }}
-                  body: |
-                      ⚠️ DEPRECATED: GitHub Releases are being phased out in favor of Azure Blob Storage.
-                      TODO: Remove this GitHub Release step after 2-3 releases.
-
-                      Tool: ${{ steps.metadata.outputs.name }}
-                      npm package: ${{ inputs.tool_id }}
-                      Version: ${{ inputs.version }}
-
-                      Automated update from update checker.
-                  files: ${{ steps.release_files.outputs.files }}
 
             - name: Build tool metadata JSON
               run: |
@@ -335,9 +291,6 @@ jobs:
                   # Azure Blob (preferred distribution)
                   BLOB_DOWNLOAD_URL="https://${{ secrets.AZURE_STORAGE_ACCOUNT }}.blob.core.windows.net/${{ secrets.AZURE_STORAGE_CONTAINER }}/packages/${FOLDER}/${FOLDER}.tar.gz"
 
-                  # GitHub Release (deprecated distribution, hosted in PowerPlatformToolBox/pptb-web)
-                  GH_RELEASE_DOWNLOAD_URL="https://github.com/PowerPlatformToolBox/pptb-web/releases/download/${FOLDER}/${FOLDER}.tar.gz"
-
                   # Prepare SQL payload for tools table
                   TOOL_PAYLOAD=$(jq -n \
                     --arg packagename "${{ steps.metadata.outputs.package_name }}" \
@@ -346,7 +299,6 @@ jobs:
                     --arg description "${{ steps.metadata.outputs.description }}" \
                     --arg readmeurl "${{ steps.metadata.outputs.readme_url }}" \
                     --arg license "${{ steps.metadata.outputs.license }}" \
-                    --arg downloadurl "$GH_RELEASE_DOWNLOAD_URL" \
                     --arg download "$BLOB_DOWNLOAD_URL" \
                     --arg icon "$ICON_URL" \
                     --arg published "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
@@ -362,7 +314,6 @@ jobs:
                       readmeurl: $readmeurl,
                       license: $license,
                       download: $download,
-                      downloadurl: $downloadurl,
                       icon: (if $icon == "" then null else $icon end),
                       published_at: $published,
                       checksum: $checksum,

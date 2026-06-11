@@ -211,62 +211,6 @@ jobs:
                       --overwrite true
                   fi
 
-            # TODO(deprecation): Remove GitHub Release uploads after 2-3 releases once consumers have migrated to Azure Blob.
-            - name: Prepare GitHub Release files (deprecated)
-              id: release_files
-              run: |
-                  # Build files list
-                  FILES="${TOOL_ID}-${TOOL_VERSION}.tar.gz"
-                  if [ "${{ steps.icon.outputs.has_icon }}" = "true" ]; then
-                    FILES="${FILES}"$'\n'"${{ steps.icon.outputs.filename }}"
-                  fi
-
-                  # Output as multiline string
-                  echo "files<<EOF" >> $GITHUB_OUTPUT
-                  echo "$FILES" >> $GITHUB_OUTPUT
-                  echo "EOF" >> $GITHUB_OUTPUT
-
-            - name: Validate GitHub token can access target repo (deprecated)
-              run: |
-                  set -euo pipefail
-
-                  # This helps turn opaque 403s into actionable errors (bad credentials, missing perms, SSO not authorized, etc.).
-                  STATUS=$(curl -sS -o /tmp/gh_repo_check.json -w "%{http_code}" \
-                    -H "Authorization: Bearer ${{ secrets.GH_PAT_TOKEN }}" \
-                    -H "Accept: application/vnd.github+json" \
-                    https://api.github.com/repos/PowerPlatformToolBox/pptb-web)
-
-                  if [ "$STATUS" != "200" ]; then
-                    echo "GitHub API access check failed (HTTP $STATUS) for PowerPlatformToolBox/pptb-web"
-                    cat /tmp/gh_repo_check.json
-                    exit 1
-                  fi
-
-            - name: Upload to GitHub Release (deprecated)
-              id: upload_gh_release
-              uses: softprops/action-gh-release@v1
-              env:
-                  # Some actions default to GITHUB_TOKEN env var even when a `token` input is provided.
-                  # Force usage of the PAT for cross-repo release creation.
-                  GITHUB_TOKEN: ${{ secrets.GH_PAT_TOKEN }}
-              with:
-                  # Cross-repo release: requires a PAT with access to PowerPlatformToolBox/pptb-web
-                  # (GITHUB_TOKEN is scoped to the current repository only).
-                  repository: PowerPlatformToolBox/pptb-web
-                  token: ${{ secrets.GH_PAT_TOKEN }}
-                  tag_name: ${{ steps.build.outputs.id }}-${{ steps.build.outputs.version }}
-                  target_commitish: main
-                  name: ${{ steps.tool.outputs.name }} v${{ steps.build.outputs.version }}
-                  body: |
-                      ⚠️ DEPRECATED: GitHub Releases are being phased out in favor of Azure Blob Storage.
-                      TODO: Remove this GitHub Release step after 2-3 releases.
-
-                      Tool: ${{ steps.tool.outputs.name }}
-                      npm package: ${{ steps.tool.outputs.package }}
-                      Version: ${{ steps.build.outputs.version }}
-                      Authors: ${{ steps.tool.outputs.authors }}
-                  files: ${{ steps.release_files.outputs.files }}
-
             - name: Build tool metadata JSON
               run: |
                   set -euo pipefail
@@ -358,9 +302,6 @@ jobs:
                   # Azure Blob (preferred distribution)
                   BLOB_DOWNLOAD_URL="https://${{ secrets.AZURE_STORAGE_ACCOUNT }}.blob.core.windows.net/${{ secrets.AZURE_STORAGE_CONTAINER }}/packages/${FOLDER}/${FOLDER}.tar.gz"
 
-                  # GitHub Release (deprecated distribution, hosted in PowerPlatformToolBox/pptb-web)
-                  GH_RELEASE_DOWNLOAD_URL="https://github.com/PowerPlatformToolBox/pptb-web/releases/download/${FOLDER}/${FOLDER}.tar.gz"
-
                   # Prepare SQL payload for tools table
                   TOOL_PAYLOAD=$(jq -n \
                     --arg packageName "${{ steps.tool.outputs.package }}" \
@@ -368,7 +309,6 @@ jobs:
                     --arg description "${{ steps.tool.outputs.description }}" \
                     --arg icon "$ICON_URL" \
                     --arg version "${{ steps.build.outputs.version }}" \
-                    --arg downloadurl "$GH_RELEASE_DOWNLOAD_URL" \
                     --arg download "$BLOB_DOWNLOAD_URL" \
                     --arg checksum "${{ steps.checksum.outputs.checksum }}" \
                     --arg size "${{ steps.checksum.outputs.size }}" \
@@ -387,7 +327,6 @@ jobs:
                       icon: (if $icon == "" then null else $icon end),
                       version: $version,
                       download: $download,
-                      downloadurl: $downloadurl,
                       checksum: $checksum,
                       size: $size,
                       readmeurl: $readmeurl,
