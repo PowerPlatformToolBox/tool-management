@@ -332,9 +332,21 @@ jobs:
                       readmeurl: $readmeurl,
                       published_at: $published,
                       license: $license,
-                      csp_exceptions: (if $csp_exceptions == "" then null else $csp_exceptions end),
+                      csp_exceptions: (
+                        if $csp_exceptions == "" then
+                          null
+                        else
+                          (try ($csp_exceptions | fromjson) catch error("Invalid JSON for csp_exceptions workflow input"))
+                        end
+                      ),
                       user_id: $submitted_by,
-                      features: (if $features == "" then null else $features end),
+                      features: (
+                        if $features == "" then
+                          null
+                        else
+                          (try ($features | fromjson) catch error("Invalid JSON for features workflow input"))
+                        end
+                      ),
                       repository: (if $repository == "" then null else $repository end),
                       website: (if $website == "" then null else $website end)
                     }')
