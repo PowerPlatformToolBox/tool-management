@@ -304,9 +304,69 @@ jobs:
                   # Azure Blob (preferred distribution)
                   BLOB_DOWNLOAD_URL="https://${{ secrets.AZURE_STORAGE_ACCOUNT }}.blob.core.windows.net/${{ secrets.AZURE_STORAGE_CONTAINER }}/packages/${FOLDER}/${FOLDER}.tar.gz"
 
-                  # Parse JSON fields safely via env vars (inline template substitution breaks shell quoting for JSON values)
-                  FEATURES_JSON=$(echo "${INPUT_FEATURES}" | jq -c 'if . == "" or . == null then null else . end' 2>/dev/null || echo 'null')
-                  CSP_JSON=$(echo "${INPUT_CSP_EXCEPTIONS}" | jq -c 'if . == "" or . == null then null else . end' 2>/dev/null || echo 'null')
+                  # Normalize JSON-like input safely. Accepts full JSON and also object fragments like "key":"value".
+                  normalize_json_input() {
+                    local raw="$1"
+                    local field_name="$2"
+                    local trimmed
+                    local candidate
+
+                    trimmed=$(printf '%s' "$raw" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+
+                    if [ -z "$trimmed" ] || [ "$trimmed" = "null" ]; then
+                      echo "null"
+                      return 0
+                    fi
+
+                    if printf '%s' "$trimmed" | jq -e . >/dev/null 2>&1; then
+                      printf '%s' "$trimmed" | jq -c .
+                      return 0
+                    fi
+
+                    # Some callers send object members without surrounding braces.
+                    if [[ "$trimmed" == *:* ]] && [[ "$trimmed" != \{* ]] && [[ "$trimmed" != \[* ]]; then
+                      candidate="{$trimmed}"
+                      if printf '%s' "$candidate" | jq -e . >/dev/null 2>&1; then
+                        printf '%s' "$candidate" | jq -c .
+                        return 0
+                      fi
+                    fi
+
+                    echo "Invalid JSON for ${field_name} workflow input: $trimmed" >&2
+                    return 1
+                  }
+
+                  FEATURES_JSON=$(normalize_json_input "${INPUT_FEATURES}" "features")
+                  CSP_JSON=$(normalize_json_input "${INPUT_CSP_EXCEPTIONS}" "csp_exceptions")
+
+                  # Safe diagnostics (do not print raw values)
+                  summarize_json_field() {
+                    local field_name="$1"
+                    local json_value="$2"
+                    local json_type
+                    local key_count
+                    local key_names
+
+                    if [ "$json_value" = "null" ]; then
+                      echo "${field_name}: value is null or empty"
+                      return 0
+                    fi
+
+                    json_type=$(printf '%s' "$json_value" | jq -r 'type')
+                    echo "${field_name}: valid JSON (type=${json_type})"
+
+                    if [ "$json_type" = "object" ]; then
+                      key_count=$(printf '%s' "$json_value" | jq 'keys | length')
+                      key_names=$(printf '%s' "$json_value" | jq -r 'keys | join(",")')
+                      echo "${field_name}: object key_count=${key_count} keys=${key_names}"
+                    elif [ "$json_type" = "array" ]; then
+                      key_count=$(printf '%s' "$json_value" | jq 'length')
+                      echo "${field_name}: array length=${key_count}"
+                    fi
+                  }
+
+                  summarize_json_field "features" "$FEATURES_JSON"
+                  summarize_json_field "csp_exceptions" "$CSP_JSON"
 
                   # Prepare SQL payload for tools table
                   TOOL_PAYLOAD=$(jq -n \
