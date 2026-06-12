@@ -55,6 +55,14 @@ on:
                 description: "Website URL"
                 required: false
                 type: string
+            minAPI:
+                description: "Minimum API version supported (e.g. 1.0)"
+                required: false
+                type: string
+            maxAPI:
+                description: "Maximum API version supported (e.g. 1.0)"
+                required: false
+                type: string
 
 jobs:
     convert:
@@ -85,7 +93,8 @@ jobs:
                   ICON='${{ inputs.icon }}'
                   REPOSITORY='${{ inputs.repository }}'
                   WEBSITE='${{ inputs.website }}'
-
+                  MIN_API='${{ inputs.minAPI }}'
+                  MAX_API='${{ inputs.maxAPI }}'
                   echo "package=$PACKAGE_NAME" >> $GITHUB_OUTPUT
                   echo "name=$DISPLAY_NAME" >> $GITHUB_OUTPUT
                   echo "description=$DESCRIPTION" >> $GITHUB_OUTPUT
@@ -94,6 +103,8 @@ jobs:
                   echo "icon=$ICON" >> $GITHUB_OUTPUT
                   echo "repository=$REPOSITORY" >> $GITHUB_OUTPUT
                   echo "website=$WEBSITE" >> $GITHUB_OUTPUT
+                  echo "minAPI=$MIN_API" >> $GITHUB_OUTPUT
+                  echo "maxAPI=$MAX_API" >> $GITHUB_OUTPUT
 
             - name: Download and build tool
               id: build
@@ -238,6 +249,8 @@ jobs:
                     --arg repository "${{ steps.tool.outputs.repository }}" \
                     --arg website "${{ steps.tool.outputs.website }}" \
                     --arg published "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+                    --arg min_api "${{ steps.tool.outputs.minAPI }}" \
+                    --arg max_api "${{ steps.tool.outputs.maxAPI }}" \
                     '{
                       tool_id: $tool_id,
                       tool_version: $tool_version,
@@ -252,6 +265,8 @@ jobs:
                       size: ($size | tonumber),
                       repository: (if $repository == "" then null else $repository end),
                       website: (if $website == "" then null else $website end),
+                      min_api: (if $min_api == "" then null else $min_api end),
+                      max_api: (if $max_api == "" then null else $max_api end),
                       published_at: $published
                     }')
 
@@ -386,6 +401,8 @@ jobs:
                     --argjson features "$FEATURES_JSON" \
                     --arg repository "${{ steps.tool.outputs.repository }}" \
                     --arg website "${{ steps.tool.outputs.website }}" \
+                    --arg min_api "${{ steps.tool.outputs.minAPI }}" \
+                    --arg max_api "${{ steps.tool.outputs.maxAPI }}" \
                     '{
                       packagename: $packageName,
                       name: $name,
@@ -402,7 +419,9 @@ jobs:
                       user_id: $submitted_by,
                       features: $features,
                       repository: (if $repository == "" then null else $repository end),
-                      website: (if $website == "" then null else $website end)
+                      website: (if $website == "" then null else $website end),
+                      min_api: (if $min_api == "" then null else $min_api end),
+                      max_api: (if $max_api == "" then null else $max_api end)
                     }')
 
                   # Insert or update tool metadata in Supabase
