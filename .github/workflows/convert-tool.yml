@@ -283,6 +283,8 @@ jobs:
               env:
                   SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
                   SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+                  INPUT_FEATURES: ${{ inputs.features }}
+                  INPUT_CSP_EXCEPTIONS: ${{ inputs.csp_exceptions }}
               if: env.SUPABASE_URL != '' && env.SUPABASE_SERVICE_ROLE_KEY != ''
               run: |
                   set -euo pipefail
@@ -302,6 +304,10 @@ jobs:
                   # Azure Blob (preferred distribution)
                   BLOB_DOWNLOAD_URL="https://${{ secrets.AZURE_STORAGE_ACCOUNT }}.blob.core.windows.net/${{ secrets.AZURE_STORAGE_CONTAINER }}/packages/${FOLDER}/${FOLDER}.tar.gz"
 
+                  # Parse JSON fields safely via env vars (inline template substitution breaks shell quoting for JSON values)
+                  FEATURES_JSON=$(echo "${INPUT_FEATURES}" | jq -c 'if . == "" or . == null then null else . end' 2>/dev/null || echo 'null')
+                  CSP_JSON=$(echo "${INPUT_CSP_EXCEPTIONS}" | jq -c 'if . == "" or . == null then null else . end' 2>/dev/null || echo 'null')
+
                   # Prepare SQL payload for tools table
                   TOOL_PAYLOAD=$(jq -n \
                     --arg packageName "${{ steps.tool.outputs.package }}" \
@@ -315,9 +321,9 @@ jobs:
                     --arg readmeurl "${{ steps.tool.outputs.readme_url }}" \
                     --arg published "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
                     --arg license "${{ inputs.license }}" \
-                    --arg csp_exceptions "${{ inputs.csp_exceptions }}" \
+                    --argjson csp_exceptions "$CSP_JSON" \
                     --arg submitted_by "${{ inputs.submitted_by }}" \
-                    --arg features "${{ inputs.features }}" \
+                    --argjson features "$FEATURES_JSON" \
                     --arg repository "${{ steps.tool.outputs.repository }}" \
                     --arg website "${{ steps.tool.outputs.website }}" \
                     '{
@@ -332,21 +338,9 @@ jobs:
                       readmeurl: $readmeurl,
                       published_at: $published,
                       license: $license,
-                      csp_exceptions: (
-                        if $csp_exceptions == "" then
-                          null
-                        else
-                          (try ($csp_exceptions | fromjson) catch error("Invalid JSON for csp_exceptions workflow input"))
-                        end
-                      ),
+                      csp_exceptions: $csp_exceptions,
                       user_id: $submitted_by,
-                      features: (
-                        if $features == "" then
-                          null
-                        else
-                          (try ($features | fromjson) catch error("Invalid JSON for features workflow input"))
-                        end
-                      ),
+                      features: $features,
                       repository: (if $repository == "" then null else $repository end),
                       website: (if $website == "" then null else $website end)
                     }')
