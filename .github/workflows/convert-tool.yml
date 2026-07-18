@@ -111,25 +111,25 @@ jobs:
               run: |
                   # Download from npm
                   npm pack ${{ steps.tool.outputs.package }}
-
+            
                   # Extract
                   tar -xzf *.tgz
                   cd package
-
+            
                   # Get version from package.json
                   VERSION=$(node -p "require('./package.json').version")
                   echo "version=$VERSION" >> $GITHUB_OUTPUT
-
-                  # Install production dependencies
-                  npm install --production --no-optional
-
+            
+                  # Install production dependencies (skip lifecycle scripts to avoid husky issues)
+                  npm install --production --no-optional --ignore-scripts
+            
                   # Run build if script exists
                   npm run --if-present build || echo "No build script found or build failed"
-
+            
                   # Create tool ID (kebab-case)
                   TOOL_ID=$(echo "${{ steps.tool.outputs.package }}" | sed 's/@//g' | sed 's/\//-/g')
                   echo "id=$TOOL_ID" >> $GITHUB_OUTPUT
-
+            
                   cd ..
 
             - name: Set tool environment
