@@ -89,8 +89,8 @@ jobs:
                   VERSION=$(node -p "require('./package.json').version")
                   echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-                  # Install production dependencies
-                  npm install --production --no-optional
+                  # Install production dependencies (skip lifecycle scripts to avoid husky issues)
+                  npm install --production --no-optional --ignore-scripts
 
                   # Run build if script exists
                   npm run --if-present build || echo "No build script found or build failed"
