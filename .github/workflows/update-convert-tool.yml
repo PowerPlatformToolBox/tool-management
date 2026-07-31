@@ -23,6 +23,14 @@ on:
                 description: "Website URL"
                 required: false
                 type: string
+            csp_exceptions:
+              description: "CSP Exceptions"
+              required: false
+              type: string
+            features:
+              description: "Features"
+              required: false
+              type: string
             branch:
                 description: "Branch to commit to (optional, defaults to current branch)"
                 required: false
@@ -64,6 +72,8 @@ jobs:
                   LICENSE=$(echo "$NPM_INFO" | jq -r '(.license // .licenses // "") | (if type=="string" then . else (.[0].type // "") end) // ""')
                   REPOSITORY=$(echo "$NPM_INFO" | jq -r '.configurations.repository // empty')
                   WEBSITE=$(echo "$NPM_INFO" | jq -r '.configurations.website // empty')
+                  CSP_EXCEPTIONS=$(echo "$NPM_INFO" | jq -c '.csp_exceptions // .cspexception // .configurations.csp_exceptions // null')
+                  FEATURES=$(echo "$NPM_INFO" | jq -c '.features // .configurations.features // null')
 
                   echo "id=$TOOL_ID" >> $GITHUB_OUTPUT
                   echo "package_name=$TOOL_PACKAGE_NAME" >> $GITHUB_OUTPUT
@@ -74,6 +84,8 @@ jobs:
                   echo "license=$LICENSE" >> $GITHUB_OUTPUT
                   echo "repository=$REPOSITORY" >> $GITHUB_OUTPUT
                   echo "website=$WEBSITE" >> $GITHUB_OUTPUT
+                  echo "csp_exceptions=$CSP_EXCEPTIONS" >> $GITHUB_OUTPUT
+                  echo "features=$FEATURES" >> $GITHUB_OUTPUT
 
             - name: Download and build tool
               id: build
@@ -201,8 +213,50 @@ jobs:
                   echo "EOF" >> $GITHUB_OUTPUT
 
             - name: Build tool metadata JSON
+              env:
+                  INPUT_FEATURES: ${{ inputs.features }}
+                  INPUT_CSP_EXCEPTIONS: ${{ inputs.csp_exceptions }}
               run: |
                   set -euo pipefail
+
+                  # Normalize JSON-like input safely. Accepts full JSON and object fragments like "key":"value".
+                  normalize_json_input() {
+                    local raw="$1"
+                    local field_name="$2"
+                    local trimmed
+                    local candidate
+
+                    trimmed=$(printf '%s' "$raw" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+
+                    if [ -z "$trimmed" ] || [ "$trimmed" = "null" ]; then
+                      echo "null"
+                      return 0
+                    fi
+
+                    if printf '%s' "$trimmed" | jq -e . >/dev/null 2>&1; then
+                      printf '%s' "$trimmed" | jq -c .
+                      return 0
+                    fi
+
+                    # Some callers send object members without surrounding braces.
+                    if [[ "$trimmed" == *:* ]] && [[ "$trimmed" != \{* ]] && [[ "$trimmed" != \[* ]]; then
+                      candidate="{$trimmed}"
+                      if printf '%s' "$candidate" | jq -e . >/dev/null 2>&1; then
+                        printf '%s' "$candidate" | jq -c .
+                        return 0
+                      fi
+                    fi
+
+                    echo "Invalid JSON for ${field_name} workflow input: $trimmed" >&2
+                    return 1
+                  }
+
+                  # Prefer caller-provided values; otherwise fall back to npm package metadata.
+                  FEATURES_SOURCE="${INPUT_FEATURES:-${{ steps.metadata.outputs.features }}}"
+                  CSP_SOURCE="${INPUT_CSP_EXCEPTIONS:-${{ steps.metadata.outputs.csp_exceptions }}}"
+
+                  FEATURES_JSON=$(normalize_json_input "${FEATURES_SOURCE}" "features")
+                  CSP_JSON=$(normalize_json_input "${CSP_SOURCE}" "csp_exceptions")
 
                   FOLDER="${TOOL_ID}-${TOOL_VERSION}"
                   DOWNLOAD_URL="https://${{ secrets.AZURE_STORAGE_ACCOUNT }}.blob.core.windows.net/${{ secrets.AZURE_STORAGE_CONTAINER }}/packages/${FOLDER}/${FOLDER}.tar.gz"
@@ -226,6 +280,8 @@ jobs:
                     --arg size "${{ steps.checksum.outputs.size }}" \
                     --arg repository "${{ inputs.repository }}" \
                     --arg website "${{ inputs.website }}" \
+                    --argjson csp_exceptions "$CSP_JSON" \
+                    --argjson features "$FEATURES_JSON" \
                     --arg published "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
                     '{
                       tool_id: $tool_id,
@@ -241,6 +297,8 @@ jobs:
                       size: ($size | tonumber),
                       repository: (if $repository == "" then null else $repository end),
                       website: (if $website == "" then null else $website end),
+                      csp_exceptions: $csp_exceptions,
+                      features: $features,
                       published_at: $published
                     }')
 
@@ -272,6 +330,8 @@ jobs:
               env:
                   SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
                   SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+                  INPUT_FEATURES: ${{ inputs.features }}
+                  INPUT_CSP_EXCEPTIONS: ${{ inputs.csp_exceptions }}
               if: env.SUPABASE_URL != '' && env.SUPABASE_SERVICE_ROLE_KEY != ''
               run: |
                   set -euo pipefail
@@ -291,6 +351,45 @@ jobs:
                   # Azure Blob (preferred distribution)
                   BLOB_DOWNLOAD_URL="https://${{ secrets.AZURE_STORAGE_ACCOUNT }}.blob.core.windows.net/${{ secrets.AZURE_STORAGE_CONTAINER }}/packages/${FOLDER}/${FOLDER}.tar.gz"
 
+                  # Normalize JSON-like input safely. Accepts full JSON and object fragments like "key":"value".
+                  normalize_json_input() {
+                    local raw="$1"
+                    local field_name="$2"
+                    local trimmed
+                    local candidate
+
+                    trimmed=$(printf '%s' "$raw" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+
+                    if [ -z "$trimmed" ] || [ "$trimmed" = "null" ]; then
+                      echo "null"
+                      return 0
+                    fi
+
+                    if printf '%s' "$trimmed" | jq -e . >/dev/null 2>&1; then
+                      printf '%s' "$trimmed" | jq -c .
+                      return 0
+                    fi
+
+                    # Some callers send object members without surrounding braces.
+                    if [[ "$trimmed" == *:* ]] && [[ "$trimmed" != \{* ]] && [[ "$trimmed" != \[* ]]; then
+                      candidate="{$trimmed}"
+                      if printf '%s' "$candidate" | jq -e . >/dev/null 2>&1; then
+                        printf '%s' "$candidate" | jq -c .
+                        return 0
+                      fi
+                    fi
+
+                    echo "Invalid JSON for ${field_name} workflow input: $trimmed" >&2
+                    return 1
+                  }
+
+                  # Prefer caller-provided values; otherwise fall back to npm package metadata.
+                  FEATURES_SOURCE="${INPUT_FEATURES:-${{ steps.metadata.outputs.features }}}"
+                  CSP_SOURCE="${INPUT_CSP_EXCEPTIONS:-${{ steps.metadata.outputs.csp_exceptions }}}"
+
+                  FEATURES_JSON=$(normalize_json_input "${FEATURES_SOURCE}" "features")
+                  CSP_JSON=$(normalize_json_input "${CSP_SOURCE}" "csp_exceptions")
+
                   # Prepare SQL payload for tools table
                   TOOL_PAYLOAD=$(jq -n \
                     --arg packagename "${{ steps.metadata.outputs.package_name }}" \
@@ -306,6 +405,8 @@ jobs:
                     --arg size "${{ steps.checksum.outputs.size }}" \
                     --arg repository "${{ inputs.repository }}" \
                     --arg website "${{ inputs.website }}" \
+                    --argjson csp_exceptions "$CSP_JSON" \
+                    --argjson features "$FEATURES_JSON" \
                     '{
                       packagename: $packagename,
                       version: $version,
@@ -319,7 +420,9 @@ jobs:
                       checksum: $checksum,
                       size: ($size|tonumber),
                       repository: (if $repository == "" then null else $repository end),
-                      website: (if $website == "" then null else $website end)
+                      website: (if $website == "" then null else $website end),
+                      csp_exceptions: $csp_exceptions,
+                      features: $features
                     }')
 
                   # Update existing tool metadata in Supabase (falls back to upsert if missing)

@@ -29,6 +29,7 @@ jobs:
                   SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
               run: |
                   UPDATES_FOUND=false
+                  rm -f updates.txt
 
                   # Fetch tools from Supabase
                   HTTP_CODE=$(curl -s -w "%{http_code}" -o /tmp/tools_response.json "$SUPABASE_URL/rest/v1/tools?select=packagename,version" \
@@ -74,8 +75,18 @@ jobs:
 
                     # Compare versions
                     if [ "$LATEST_VERSION" != "$CURRENT_VERSION" ]; then
+                      NPM_INFO=$(npm view "$NPM_PACKAGE@$LATEST_VERSION" --json 2>/dev/null || echo '{}')
+
+                      # Retrieve update-time metadata from the new package version.
+                      CSP_JSON=$(echo "$NPM_INFO" | jq -c '.csp_exceptions // .cspexception // .configurations.csp_exceptions // null')
+                      FEATURES_JSON=$(echo "$NPM_INFO" | jq -c '.features // .configurations.features // null')
+
+                      # Preserve structured JSON safely in line-oriented temp files.
+                      CSP_B64=$(printf '%s' "$CSP_JSON" | base64 | tr -d '\n')
+                      FEATURES_B64=$(printf '%s' "$FEATURES_JSON" | base64 | tr -d '\n')
+
                       echo "🔄 Update available for $NPM_PACKAGE: $CURRENT_VERSION → $LATEST_VERSION"
-                      echo "$NPM_PACKAGE,$CURRENT_VERSION,$LATEST_VERSION" >> updates.txt
+                      echo "$NPM_PACKAGE,$CURRENT_VERSION,$LATEST_VERSION,$CSP_B64,$FEATURES_B64" >> updates.txt
                       UPDATES_FOUND=true
                     fi
                   done
@@ -90,7 +101,7 @@ jobs:
               run: |
                   # Remove any stale mapping file so this run controls what gets processed
                   rm -f tool_update_ids.txt
-                  while IFS=',' read -r PACKAGE CURRENT_VERSION LATEST_VERSION; do
+                  while IFS=',' read -r PACKAGE CURRENT_VERSION LATEST_VERSION CSP_B64 FEATURES_B64; do
                     if [ -z "$PACKAGE" ]; then
                       continue
                     fi
@@ -109,7 +120,7 @@ jobs:
                       EXISTING_ID=$(echo "$EXISTING_RESPONSE" | jq -r '.[0].id // empty')
                       if [ -n "$EXISTING_ID" ]; then
                         echo "tool_updates already exists for $PACKAGE@$LATEST_VERSION (id=$EXISTING_ID); enqueueing for processing."
-                        echo "$PACKAGE,$EXISTING_ID" >> tool_update_ids.txt
+                        echo "$PACKAGE,$EXISTING_ID,$CSP_B64,$FEATURES_B64" >> tool_update_ids.txt
                       else
                         echo "Warning: tool_updates exists for $PACKAGE@$LATEST_VERSION but no id was returned; skipping enqueue."
                       fi
@@ -136,7 +147,7 @@ jobs:
 
                     # Persist mapping for the next step
                     if [ -n "$TOOL_UPDATES_ID" ]; then
-                      echo "$PACKAGE,$TOOL_UPDATES_ID" >> tool_update_ids.txt
+                      echo "$PACKAGE,$TOOL_UPDATES_ID,$CSP_B64,$FEATURES_B64" >> tool_update_ids.txt
                     else
                       echo "Warning: No tool_updates id returned for $PACKAGE"
                     fi
@@ -157,11 +168,25 @@ jobs:
                     echo "No tool_update_ids.txt found; skipping API notifications."
                     exit 0
                   fi
-                  while IFS=',' read -r PACKAGE TOOL_UPDATES_ID; do
+                  while IFS=',' read -r PACKAGE TOOL_UPDATES_ID CSP_B64 FEATURES_B64; do
                     if [ -z "$PACKAGE" ] || [ -z "$TOOL_UPDATES_ID" ]; then
                       continue
                     fi
-                    PAYLOAD=$(jq -c -n --arg packageName "$PACKAGE" --arg toolUpdateId "$TOOL_UPDATES_ID" '{packageName: $packageName, toolUpdateId: $toolUpdateId}')
+
+                    CSP_JSON=$(printf '%s' "$CSP_B64" | base64 --decode)
+                    FEATURES_JSON=$(printf '%s' "$FEATURES_B64" | base64 --decode)
+
+                    PAYLOAD=$(jq -c -n \
+                      --arg packageName "$PACKAGE" \
+                      --arg toolUpdateId "$TOOL_UPDATES_ID" \
+                      --argjson csp_exceptions "$CSP_JSON" \
+                      --argjson features "$FEATURES_JSON" \
+                      '{
+                        packageName: $packageName,
+                        toolUpdateId: $toolUpdateId,
+                        cspExceptions: $csp_exceptions,
+                        features: $features
+                      }')
 
                     echo "Queuing update API notification for $PACKAGE (tool_update_id=$TOOL_UPDATES_ID)"
 
