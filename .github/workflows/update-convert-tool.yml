@@ -374,7 +374,7 @@ jobs:
                         ENCODED_NAME=$(jq -rn --arg v "$AUTHOR_NAME" '$v|@uri')
                         CONTRIBUTOR_LOOKUP=$(curl -s "${{ secrets.SUPABASE_URL }}/rest/v1/contributors?name=eq.${ENCODED_NAME}&select=id&limit=1" \
                           -H "apikey: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}" \
-                          -H "Authorization: Bearer secrets.SUPABASE_SERVICE_ROLE_KEY }}" \
+                          -H "Authorization: Bearer ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}" \
                           -H "Content-Type: application/json")
                         CONTRIBUTOR_ID=$(echo "$CONTRIBUTOR_LOOKUP" | jq -r '.[0].id // empty')
 
@@ -382,7 +382,7 @@ jobs:
                           CONTRIBUTOR_PAYLOAD=$(jq -n --arg name "$AUTHOR_NAME" '{name: $name}')
                           CONTRIBUTOR_RESPONSE=$(curl -s -X POST "${{ secrets.SUPABASE_URL }}/rest/v1/contributors?select=id" \
                             -H "apikey: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}" \
-                            -H "Authorization: Bearer secrets.SUPABASE_SERVICE_ROLE_KEY }}" \
+                            -H "Authorization: Bearer ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}" \
                             -H "Content-Type: application/json" \
                             -H "Prefer: return=representation" \
                             -d "$CONTRIBUTOR_PAYLOAD")
@@ -399,7 +399,7 @@ jobs:
 
                           curl -s -X POST "${{ secrets.SUPABASE_URL }}/rest/v1/tool_contributors" \
                             -H "apikey: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}" \
-                            -H "Authorization: Bearer secrets.SUPABASE_SERVICE_ROLE_KEY }}" \
+                            -H "Authorization: Bearer ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}" \
                             -H "Content-Type: application/json" \
                             -H "Prefer: resolution=ignore-duplicates" \
                             -d "$TOOL_CONTRIBUTOR_PAYLOAD" >/dev/null || true
@@ -414,12 +414,12 @@ jobs:
                     # Remove contributors that are no longer in the authors list
                     EXISTING_CONTRIBUTORS=$(curl -s "${{ secrets.SUPABASE_URL }}/rest/v1/tool_contributors?tool_id=eq.$TOOL_ID&select=contributor_id" \
                       -H "apikey: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}" \
-                      -H "Authorization: Bearer secrets.SUPABASE_SERVICE_ROLE_KEY }}")
+                      -H "Authorization: Bearer ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}")
                     for EXISTING_ID in $(echo "$EXISTING_CONTRIBUTORS" | jq -r '.[].contributor_id'); do
                       if ! echo ",$NEW_CONTRIBUTOR_IDS," | grep -q ",$EXISTING_ID,"; then
                         curl -s -X DELETE "${{ secrets.SUPABASE_URL }}/rest/v1/tool_contributors?tool_id=eq.$TOOL_ID&contributor_id=eq.$EXISTING_ID" \
                           -H "apikey: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}" \
-                          -H "Authorization: Bearer secrets.SUPABASE_SERVICE_ROLE_KEY }}" >/dev/null || true
+                          -H "Authorization: Bearer ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}" >/dev/null || true
                         echo "Contributor removed: $EXISTING_ID"
                       fi
                     done
