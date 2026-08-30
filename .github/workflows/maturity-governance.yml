@@ -1,0 +1,45 @@
+name: Tool Maturity Governance
+
+on:
+    schedule:
+        - cron: "30 0 * * *" # Daily at 00:30 UTC, after the update check
+    workflow_dispatch:
+        inputs:
+            tool_id:
+                description: "Optional tool UUID to evaluate"
+                required: false
+                type: string
+            dry_run:
+                description: "Evaluate without database writes or emails"
+                required: false
+                default: true
+                type: boolean
+
+concurrency:
+    group: maturity-governance
+    cancel-in-progress: false
+
+jobs:
+    evaluate-verified-tools:
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v4
+
+            - name: Setup Node.js
+              uses: actions/setup-node@v4
+              with:
+                  node-version: "20"
+
+            - name: Run governance checks
+              env:
+                  SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+                  SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                  NOTIFICATION_API_URL: ${{ secrets.REVOKE_VERIFY_NOTIFY_API_URL }}
+                  TOOL_ID: ${{ inputs.tool_id }}
+                  DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
+              run: node buildScripts/maturityGovernance.js
