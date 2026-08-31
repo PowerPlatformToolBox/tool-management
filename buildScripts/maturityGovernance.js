@@ -50,7 +50,7 @@ function parseGitHubRepository(repository) {
         .replace(/^git\+/, "")
         .replace(/^git@github\.com:/, "https://github.com/")
         .replace(/\.git(?:#.*)?$/, "");
-    const match = normalized.match(/^https?:\/\/(?:www\.)?github\.com\/([^/]+)\/([^/#?]+)(?:[?#].*)?$/i);
+    const match = normalized.match(/^https?:\/\/(?:www\.)?github\.com\/([^/]+)\/([^/#?]+)(?:[/#?].*)?$/i);
     return match ? { owner: match[1], repo: match[2] } : null;
 }
 

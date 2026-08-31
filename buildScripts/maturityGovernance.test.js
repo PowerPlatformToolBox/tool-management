@@ -77,6 +77,7 @@ test("bug health applies PASS, FLAG, and BLOCKER response thresholds", () => {
 test("common GitHub repository URLs are parsed", () => {
     assert.deepEqual(parseGitHubRepository("git@github.com:owner/repo.git"), { owner: "owner", repo: "repo" });
     assert.deepEqual(parseGitHubRepository("git+ssh://git@github.com/owner/repo.git"), { owner: "owner", repo: "repo" });
+    assert.deepEqual(parseGitHubRepository("https://github.com/owner/repo/tree/main/tools/my-tool"), { owner: "owner", repo: "repo" });
 });
 
 test("high CVE immediately revokes and requests an email", async () => {
