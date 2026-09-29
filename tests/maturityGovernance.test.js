@@ -6,7 +6,7 @@ const {
     hasNewCspException,
     parseGitHubRepository,
     processTool,
-} = require("./maturityGovernance");
+} = require("../buildScripts/maturityGovernance");
 
 const NOW = new Date("2026-08-29T00:00:00.000Z");
 const cleanAudit = { metadata: { vulnerabilities: { high: 0, critical: 0 } } };

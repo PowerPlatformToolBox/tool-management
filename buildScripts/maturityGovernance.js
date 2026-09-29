@@ -264,10 +264,20 @@ async function loadVerifiedTools(client, toolId) {
     const tools = [];
     for (const maturity of maturities) {
         const rows = await client.supabase(
-            `tools?id=eq.${encodeURIComponent(maturity.tool_id)}&select=id,name,packagename,version,repository,csp_exceptions,user_id`,
+            `tools?id=eq.${encodeURIComponent(maturity.tool_id)}&select=id,name,packagename,current_release_id,repository,csp_exceptions,user_id`,
         );
-        if (!rows[0]) throw new Error(`Verified tool ${maturity.tool_id} was not found`);
-        tools.push({ ...rows[0], maturity });
+        const tool = rows[0];
+        if (!tool) throw new Error(`Verified tool ${maturity.tool_id} was not found`);
+
+        // Version now lives on the current release, not tools (legacy column dropped).
+        let version = null;
+        if (tool.current_release_id) {
+            const releases = await client.supabase(
+                `tool_releases?id=eq.${encodeURIComponent(tool.current_release_id)}&select=version`,
+            );
+            version = releases[0]?.version ?? null;
+        }
+        tools.push({ ...tool, version, maturity });
     }
     return tools;
 }

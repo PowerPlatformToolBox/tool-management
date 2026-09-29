@@ -31,8 +31,8 @@ jobs:
                   UPDATES_FOUND=false
                   rm -f updates.txt
 
-                  # Fetch tools from Supabase
-                  HTTP_CODE=$(curl -s -w "%{http_code}" -o /tmp/tools_response.json "$SUPABASE_URL/rest/v1/tools?select=packagename,version" \
+                  # Fetch tools from Supabase (version now lives on the current release, not tools).
+                  HTTP_CODE=$(curl -s -w "%{http_code}" -o /tmp/tools_response.json "$SUPABASE_URL/rest/v1/tools?select=packagename,current_release_id" \
                     -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
                     -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY")
                   TOOLS_RESPONSE=$(cat /tmp/tools_response.json)
@@ -50,6 +50,21 @@ jobs:
                     echo "Response: $TOOLS_RESPONSE"
                     exit 1
                   fi
+
+                  # Batch-fetch the current release's version for every tool in one request.
+                  RELEASE_IDS=$(echo "$TOOLS_RESPONSE" | jq -r '[.[].current_release_id | select(. != null)] | unique | join(",")')
+                  RELEASES_RESPONSE="[]"
+                  if [ -n "$RELEASE_IDS" ]; then
+                    RELEASES_RESPONSE=$(curl -sS "$SUPABASE_URL/rest/v1/tool_releases?select=id,version&id=in.($RELEASE_IDS)" \
+                      -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
+                      -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY")
+                  fi
+
+                  # Join tools with their current release version by current_release_id.
+                  TOOLS_RESPONSE=$(jq -c -n --argjson tools "$TOOLS_RESPONSE" --argjson releases "$RELEASES_RESPONSE" '
+                    ($releases | map({(.id): .version}) | add // {}) as $versions
+                    | $tools | map({packagename, version: ($versions[.current_release_id] // null)})
+                  ')
 
                   # For each tool in Supabase
                   for row in $(echo "$TOOLS_RESPONSE" | jq -r '.[] | @base64'); do

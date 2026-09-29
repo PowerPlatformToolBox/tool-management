@@ -286,12 +286,34 @@ jobs:
                     --auth-mode login \
                     --overwrite true
 
+            - name: Detect pptb.config
+              id: pptb_config
+              run: |
+                  set -euo pipefail
+
+                  # pptb.config.json always sits alongside package.json.
+                  CONFIG_PATH="package/pptb.config.json"
+                  CONFIG_JSON="null"
+                  if [ -f "$CONFIG_PATH" ]; then
+                    if jq -e . "$CONFIG_PATH" >/dev/null 2>&1; then
+                      CONFIG_JSON=$(jq -c . "$CONFIG_PATH")
+                      echo "Found pptb.config.json"
+                    else
+                      echo "⚠️ $CONFIG_PATH is not valid JSON; ignoring"
+                    fi
+                  fi
+
+                  echo "json<<EOF" >> $GITHUB_OUTPUT
+                  echo "$CONFIG_JSON" >> $GITHUB_OUTPUT
+                  echo "EOF" >> $GITHUB_OUTPUT
+
             - name: Update Supabase database
               env:
                   SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
                   SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
                   INPUT_FEATURES: ${{ inputs.features }}
                   INPUT_CSP_EXCEPTIONS: ${{ inputs.csp_exceptions }}
+                  PPTB_CONFIG_JSON: ${{ steps.pptb_config.outputs.json }}
               if: env.SUPABASE_URL != '' && env.SUPABASE_SERVICE_ROLE_KEY != ''
               run: |
                   set -euo pipefail
@@ -375,57 +397,32 @@ jobs:
                   summarize_json_field "features" "$FEATURES_JSON"
                   summarize_json_field "csp_exceptions" "$CSP_JSON"
 
-                  # Prepare SQL payload for tools table
-                  TOOL_PAYLOAD=$(jq -n \
-                    --arg packageName "${{ steps.tool.outputs.package }}" \
-                    --arg name "${{ steps.tool.outputs.name }}" \
-                    --arg description "${{ steps.tool.outputs.description }}" \
-                    --arg icon "$ICON_URL" \
-                    --arg version "${{ steps.build.outputs.version }}" \
-                    --arg download "$BLOB_DOWNLOAD_URL" \
-                    --arg checksum "${{ steps.checksum.outputs.checksum }}" \
-                    --arg size "${{ steps.checksum.outputs.size }}" \
-                    --arg readmeurl "${{ steps.tool.outputs.readme_url }}" \
-                    --arg published "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-                    --arg license "${{ inputs.license }}" \
-                    --argjson csp_exceptions "$CSP_JSON" \
-                    --arg submitted_by "${{ inputs.submitted_by }}" \
-                    --argjson features "$FEATURES_JSON" \
-                    --arg repository "${{ steps.tool.outputs.repository }}" \
-                    --arg website "${{ steps.tool.outputs.website }}" \
-                    --arg min_api "${{ steps.tool.outputs.minAPI }}" \
-                    '{
-                      packagename: $packageName,
-                      name: $name,
-                      description: $description,
-                      icon: (if $icon == "" then null else $icon end),
-                      version: $version,
-                      download: $download,
-                      checksum: $checksum,
-                      size: $size,
-                      readmeurl: $readmeurl,
-                      published_at: $published,
-                      license: $license,
-                      csp_exceptions: $csp_exceptions,
-                      user_id: $submitted_by,
-                      features: $features,
-                      repository: (if $repository == "" then null else $repository end),
-                      website: (if $website == "" then null else $website end),
-                      min_api: (if $min_api == "" then null else $min_api end)
-                    }')
+                  # Publish tool identity, release metadata and package features atomically
+                  # through the restricted publish_tool_release RPC (see supabase/sql/publish_tool_release.sql).
+                  PUBLISH_OUTPUT=$(TOOL_PACKAGENAME="${{ steps.tool.outputs.package }}" \
+                    TOOL_NAME="${{ steps.tool.outputs.name }}" \
+                    TOOL_DESCRIPTION="${{ steps.tool.outputs.description }}" \
+                    TOOL_LICENSE="${{ inputs.license }}" \
+                    TOOL_REPOSITORY="${{ steps.tool.outputs.repository }}" \
+                    TOOL_WEBSITE="${{ steps.tool.outputs.website }}" \
+                    TOOL_MIN_API="${{ steps.tool.outputs.minAPI }}" \
+                    TOOL_SUBMITTED_BY="${{ inputs.submitted_by }}" \
+                    TOOL_CSP_EXCEPTIONS="$CSP_JSON" \
+                    TOOL_VERSION="${{ steps.build.outputs.version }}" \
+                    TOOL_DOWNLOAD="$BLOB_DOWNLOAD_URL" \
+                    TOOL_ICON="$ICON_URL" \
+                    TOOL_CHECKSUM="${{ steps.checksum.outputs.checksum }}" \
+                    TOOL_SIZE="${{ steps.checksum.outputs.size }}" \
+                    TOOL_READMEURL="${{ steps.tool.outputs.readme_url }}" \
+                    TOOL_PUBLISHED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+                    TOOL_FEATURES="$FEATURES_JSON" \
+                    TOOL_PPTB_CONFIG="$PPTB_CONFIG_JSON" \
+                    node buildScripts/publishToolRelease.js)
 
-                  # Insert or update tool metadata in Supabase
-                  RESPONSE=$(curl -X POST "${{ secrets.SUPABASE_URL }}/rest/v1/tools" \
-                    -H "apikey: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}" \
-                    -H "Authorization: Bearer ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}" \
-                    -H "Content-Type: application/json" \
-                    -H "Prefer: resolution=merge-duplicates,return=representation" \
-                    -d "$TOOL_PAYLOAD")
+                  echo "$PUBLISH_OUTPUT"
 
-                  echo "Supabase tools response: $RESPONSE"
-
-                  # Extract the tool_id from response
-                  TOOL_ID=$(echo "$RESPONSE" | jq -r '.[0].id // empty')
+                  # Extract the tool_id from the script's result line
+                  TOOL_ID=$(echo "$PUBLISH_OUTPUT" | grep '^RESULT_JSON:' | sed 's/^RESULT_JSON://' | jq -r '.tool_id // empty')
 
                   if [ -n "$TOOL_ID" ]; then
                     echo "Tool inserted/updated with ID: $TOOL_ID"
