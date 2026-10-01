@@ -7,7 +7,7 @@
 			"command": "node",
 			"args": [
 				"--test",
-				"buildScripts/maturityGovernance.test.js"
+				"tests"
 			],
 			"isBackground": false,
 			"problemMatcher": [],
