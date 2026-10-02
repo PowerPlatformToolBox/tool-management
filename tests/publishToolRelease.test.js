@@ -1,5 +1,7 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
+const { readFileSync } = require("node:fs");
+const path = require("node:path");
 
 const {
     MAX_RETAINED_RELEASES,
@@ -51,6 +53,13 @@ test("mergeMcpFeature adds mcpEnabled=true when pptb.config declares headless ag
         mergeMcpFeature({ darkMode: true }, { agents: { headless: true } }),
         { darkMode: true, mcpEnabled: true },
     );
+});
+
+test("publishing SQL validates and clears features from both package-controlled sources", () => {
+    const sql = readFileSync(path.join(__dirname, "../supabase/sql/publish_tool_release.sql"), "utf8");
+    assert.match(sql, /delete from public\.tool_release_features[\s\S]*?definition\.source in \('package\.json', 'pptb\.config\.json'\);/);
+    assert.match(sql, /where definition\.key = v_feature_key\s+and definition\.source in \('package\.json', 'pptb\.config\.json'\);/);
+    assert.doesNotMatch(sql, /definition\.source = 'package\.json'/);
 });
 
 test("buildReleasePayload rejects missing required fields", () => {

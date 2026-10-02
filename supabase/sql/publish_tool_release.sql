@@ -140,8 +140,8 @@ begin
     delete from public.tool_release_features existing_feature
     using public.tool_feature_definitions definition
     where existing_feature.release_id = v_release_id
-      and definition.key = existing_feature.feature_key
-      and definition.source = 'package.json';
+        and definition.key = existing_feature.feature_key
+        and definition.source in ('package.json', 'pptb.config.json');
 
     if pg_catalog.jsonb_typeof(payload->'features') = 'object' then
         for v_feature_key, v_feature_value in
@@ -155,10 +155,11 @@ begin
             select definition.value_type, definition.allowed_values
             into v_definition_type, v_allowed_values
             from public.tool_feature_definitions definition
-            where definition.key = v_feature_key and definition.source = 'package.json';
+                        where definition.key = v_feature_key
+                            and definition.source in ('package.json', 'pptb.config.json');
 
             if not found then
-                raise exception 'Unknown package feature: %', v_feature_key;
+                                raise exception 'Unknown release feature: %', v_feature_key;
             end if;
 
             if pg_catalog.jsonb_typeof(v_feature_value) = 'null' then
