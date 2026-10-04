@@ -102,7 +102,7 @@ jobs:
                   echo "version=$VERSION" >> $GITHUB_OUTPUT
 
                   # Install production dependencies (skip lifecycle scripts to avoid husky issues)
-                  npm install --production --no-optional --ignore-scripts
+                  npm install --omit=dev --omit=optional --ignore-scripts --legacy-peer-deps
 
                   # Run build if script exists
                   npm run --if-present build || echo "No build script found or build failed"

@@ -2,12 +2,11 @@
 	"version": "2.0.0",
 	"tasks": [
 		{
-			"label": "Test maturity governance final",
+			"label": "Test All",
 			"type": "shell",
-			"command": "node",
+			"command": "npm",
 			"args": [
-				"--test",
-				"tests"
+				"test"
 			],
 			"isBackground": false,
 			"problemMatcher": [],

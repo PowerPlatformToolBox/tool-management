@@ -1,0 +1,15 @@
+{
+    "name": "tool-management",
+    "version": "1.0.0",
+    "private": true,
+    "description": "Tool intake, conversion, publishing, and governance workflows.",
+    "engines": {
+        "node": ">=20"
+    },
+    "scripts": {
+        "test": "node --test tests/conversionInstall.test.js tests/maturityGovernance.test.js tests/publishToolRelease.test.js",
+        "test:conversion": "node --test tests/conversionInstall.test.js",
+        "test:maturity": "node --test tests/maturityGovernance.test.js",
+        "test:publish": "node --test tests/publishToolRelease.test.js"
+    }
+}
