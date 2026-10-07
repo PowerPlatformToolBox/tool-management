@@ -18,7 +18,7 @@ export TOOL_ID="TEST_TOOL_UUID"
 
 ```json
 {
-  "event": "revoked_cve",
+  "event": "cve_grace_started",
   "developerId": "uuid",
   "toolId": "uuid",
   "toolName": "Test Tool",
@@ -26,7 +26,9 @@ export TOOL_ID="TEST_TOOL_UUID"
 }
 ```
 
-Possible events are `revoked_cve`, `revoked_csp_exception`, `bug_health_grace_started`, `revoked_grace_expired_bug_health`, `api_breaking_change_grace_started`, and `revoked_grace_expired_api_breaking`.
+Before deploying CVE grace handling, confirm the live table matches the supplied schema (`public.tool_grace_periods`, text `trigger_type`, and the `bug_health`, `api_breaking_change`, and `user_concern` values), then run [`supabase/sql/add_cve_grace_trigger.sql`](../supabase/sql/add_cve_grace_trigger.sql) in the Supabase SQL editor. The script preserves those values and adds `cve`; it stops without changing the table if the deployed schema differs or `cve` is already allowed.
+
+Possible events are `cve_grace_started`, `revoked_grace_expired_cve`, `revoked_csp_exception`, `bug_health_grace_started`, `revoked_grace_expired_bug_health`, `api_breaking_change_grace_started`, and `revoked_grace_expired_api_breaking`.
 
 Run `DRY_RUN=true node buildScripts/maturityGovernance.js` first to inspect decisions without writes or emails. `NOTIFICATION_API_URL` and its secret are not required when `DRY_RUN=true`. Local fixtures replace only npm audit and GitHub issue responses; Supabase reads and writes remain real.
 
@@ -71,7 +73,7 @@ Run:
 node buildScripts/maturityGovernance.js --fixtures "$TMPDIR/maturity-cve.json"
 ```
 
-Expected: `tool_maturity.status = 'unverified'`, `last_change_reason = 'revoked_cve'`, `last_changed_at` changes, no grace row is created, and pptb-web receives `revoked_cve`.
+Expected on the first run: the tool remains Verified, one active `cve` grace row has a deadline 14 days ahead, and pptb-web receives `cve_grace_started` with the deadline and high/critical vulnerability counts. If a later audit no longer reports high or critical vulnerabilities, the grace row becomes `resolved`. If a high or critical vulnerability remains after the deadline, the grace row becomes `expired_badge_removed`, the tool becomes Unverified with `last_change_reason = 'revoked_grace_expired_cve'`, and pptb-web receives the matching event.
 
 ## 2. New CSP exception
 

@@ -80,12 +80,54 @@ test("common GitHub repository URLs are parsed", () => {
     assert.deepEqual(parseGitHubRepository("https://github.com/owner/repo/tree/main/tools/my-tool"), { owner: "owner", repo: "repo" });
 });
 
-test("high CVE immediately revokes and requests an email", async () => {
+test("high CVE starts a two-week grace period and requests an email", async () => {
     const client = makeClient();
     await processTool(client, makeTool(), new Map(), NOW, { audit: vulnerableAudit, issues: [] });
-    assert.equal(maturityUpdate(client).body.status, "unverified");
-    assert.equal(maturityUpdate(client).body.last_change_reason, "revoked_cve");
-    assert.equal(client.calls[0].event, "revoked_cve");
+    const insert = client.calls.find((call) => call.path === "tool_grace_periods?select=id,related_detail");
+    assert.equal(insert.body.trigger_type, "cve");
+    assert.equal(insert.body.deadline_at, "2026-09-12T00:00:00.000Z");
+    assert.equal(insert.body.related_detail.high_count, 1);
+    assert.equal(client.calls.find((call) => call.type === "notify").event, "cve_grace_started");
+    assert.equal(maturityUpdate(client), undefined);
+});
+
+test("resolved CVE closes its active grace period", async () => {
+    const client = makeClient();
+    const grace = new Map([[
+        "cve",
+        { id: "grace-cve", deadline_at: "2026-09-12T00:00:00.000Z", related_detail: {} },
+    ]]);
+    await processTool(client, makeTool(), grace, NOW, { audit: cleanAudit, issues: [] });
+    const update = client.calls.find((call) => call.path === "tool_grace_periods?id=eq.grace-cve");
+    assert.deepEqual(update.body, { status: "resolved", resolved_at: NOW.toISOString() });
+    assert.equal(maturityUpdate(client), undefined);
+});
+
+test("unresolved CVE revokes after its grace period expires", async () => {
+    const client = makeClient();
+    const grace = new Map([[
+        "cve",
+        { id: "grace-cve", deadline_at: "2026-08-28T00:00:00.000Z", related_detail: {} },
+    ]]);
+    await processTool(client, makeTool(), grace, NOW, { audit: vulnerableAudit, issues: [] });
+    assert.equal(client.calls[0].event, "revoked_grace_expired_cve");
+    assert.equal(client.calls[1].body.status, "expired_badge_removed");
+    assert.equal(maturityUpdate(client).body.last_change_reason, "revoked_grace_expired_cve");
+});
+
+test("active CVE grace period sends its start notification only once", async () => {
+    const client = makeClient();
+    const grace = new Map([[
+        "cve",
+        {
+            id: "grace-cve",
+            deadline_at: "2026-09-12T00:00:00.000Z",
+            related_detail: { governance_notified_at: "2026-08-28T00:00:00.000Z" },
+        },
+    ]]);
+    await processTool(client, makeTool(), grace, NOW, { audit: vulnerableAudit, issues: [] });
+    assert.equal(client.calls.some((call) => call.type === "notify"), false);
+    assert.equal(maturityUpdate(client), undefined);
 });
 
 test("new CSP exception immediately revokes and requests an email", async () => {

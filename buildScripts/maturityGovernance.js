@@ -256,6 +256,40 @@ async function createBugGrace(client, tool, health, now) {
     }
 }
 
+async function createCveGrace(client, tool, audit, now) {
+    const deadlineAt = new Date(now.getTime() + 14 * DAY_MS).toISOString();
+    const vulnerabilities = audit?.metadata?.vulnerabilities || {};
+    const details = {
+        deadlineAt,
+        highCount: vulnerabilities.high || 0,
+        criticalCount: vulnerabilities.critical || 0,
+    };
+    let insertedGrace;
+    if (!client.config.dryRun) {
+        const inserted = await client.supabase("tool_grace_periods?select=id,related_detail", {
+            method: "POST",
+            headers: { Prefer: "return=representation" },
+            body: JSON.stringify({
+                tool_id: tool.id,
+                trigger_type: "cve",
+                started_at: now.toISOString(),
+                deadline_at: deadlineAt,
+                related_detail: {
+                    high_count: details.highCount,
+                    critical_count: details.criticalCount,
+                },
+            }),
+        });
+        insertedGrace = inserted?.[0];
+    }
+    await client.notify(tool, "cve_grace_started", details);
+    if (insertedGrace) {
+        await patchGrace(client, insertedGrace.id, {
+            related_detail: { ...insertedGrace.related_detail, governance_notified_at: now.toISOString() },
+        });
+    }
+}
+
 async function loadVerifiedTools(client, toolId) {
     const filter = toolId ? `&tool_id=eq.${encodeURIComponent(toolId)}` : "";
     const maturities = await client.supabase(
@@ -308,10 +342,30 @@ async function processApiBreakingGrace(client, tool, grace, now) {
 async function processTool(client, tool, graceByTrigger, now, fixture = {}) {
     if (await processApiBreakingGrace(client, tool, graceByTrigger.get("api_breaking_change"), now)) return;
 
-    if (auditHasHighOrCritical(runNpmAudit(tool, fixture.audit))) {
-        await revokeImmediately(client, tool, "revoked_cve", now);
-        console.log(`${tool.name}: revoked for high/critical CVE`);
-        return;
+    const audit = runNpmAudit(tool, fixture.audit);
+    const cveGrace = graceByTrigger.get("cve");
+    if (auditHasHighOrCritical(audit)) {
+        if (!cveGrace) {
+            await createCveGrace(client, tool, audit, now);
+            console.log(`${tool.name}: CVE grace period started`);
+        } else if (new Date(cveGrace.deadline_at) <= now) {
+            await expireGrace(client, tool, cveGrace, "revoked_grace_expired_cve", now);
+            console.log(`${tool.name}: revoked after CVE grace period`);
+            return;
+        } else if (!cveGrace.related_detail?.governance_notified_at) {
+            const vulnerabilities = audit?.metadata?.vulnerabilities || {};
+            await client.notify(tool, "cve_grace_started", {
+                deadlineAt: cveGrace.deadline_at,
+                highCount: vulnerabilities.high || 0,
+                criticalCount: vulnerabilities.critical || 0,
+            });
+            await patchGrace(client, cveGrace.id, {
+                related_detail: { ...cveGrace.related_detail, governance_notified_at: now.toISOString() },
+            });
+        }
+    } else if (cveGrace) {
+        await patchGrace(client, cveGrace.id, { status: "resolved", resolved_at: now.toISOString() });
+        console.log(`${tool.name}: CVE grace period resolved`);
     }
 
     if (hasNewCspException(tool.csp_exceptions, tool.maturity.verified_csp_exceptions_snapshot)) {
