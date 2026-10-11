@@ -80,25 +80,37 @@ jobs:
 
             - name: Extract tool info
               id: tool
+              env:
+                  TOOL_PACKAGE: ${{ inputs.npm_package_name }}
+                  TOOL_NAME: ${{ inputs.display_name }}
+                  TOOL_DESCRIPTION: ${{ inputs.description }}
+                  TOOL_AUTHORS: ${{ inputs.authors }}
+                  TOOL_README_URL: ${{ inputs.readme_url }}
+                  TOOL_ICON: ${{ inputs.icon }}
+                  TOOL_REPOSITORY: ${{ inputs.repository }}
+                  TOOL_WEBSITE: ${{ inputs.website }}
+                  TOOL_MIN_API: ${{ inputs.minAPI }}
               run: |
-                  PACKAGE_NAME='${{ inputs.npm_package_name }}'
-                  DISPLAY_NAME='${{ inputs.display_name }}'
-                  DESCRIPTION='${{ inputs.description }}'
-                  AUTHORS='${{ inputs.authors }}'
-                  README_URL='${{ inputs.readme_url }}'
-                  ICON='${{ inputs.icon }}'
-                  REPOSITORY='${{ inputs.repository }}'
-                  WEBSITE='${{ inputs.website }}'
-                  MIN_API='${{ inputs.minAPI }}'
-                  echo "package=$PACKAGE_NAME" >> $GITHUB_OUTPUT
-                  echo "name=$DISPLAY_NAME" >> $GITHUB_OUTPUT
-                  echo "description=$DESCRIPTION" >> $GITHUB_OUTPUT
-                  echo "authors=$AUTHORS" >> $GITHUB_OUTPUT
-                  echo "readme_url=$README_URL" >> $GITHUB_OUTPUT
-                  echo "icon=$ICON" >> $GITHUB_OUTPUT
-                  echo "repository=$REPOSITORY" >> $GITHUB_OUTPUT
-                  echo "website=$WEBSITE" >> $GITHUB_OUTPUT
-                  echo "minAPI=$MIN_API" >> $GITHUB_OUTPUT
+                  node <<'NODE'
+                  const { appendFileSync } = require('node:fs');
+                  const { randomUUID } = require('node:crypto');
+                  const fields = {
+                    package: 'TOOL_PACKAGE',
+                    name: 'TOOL_NAME',
+                    description: 'TOOL_DESCRIPTION',
+                    authors: 'TOOL_AUTHORS',
+                    readme_url: 'TOOL_README_URL',
+                    icon: 'TOOL_ICON',
+                    repository: 'TOOL_REPOSITORY',
+                    website: 'TOOL_WEBSITE',
+                    minAPI: 'TOOL_MIN_API',
+                  };
+                  for (const [output, variable] of Object.entries(fields)) {
+                    const delimiter = randomUUID();
+                    appendFileSync(process.env.GITHUB_OUTPUT,
+                      `${output}<<${delimiter}\n${process.env[variable] || ''}\n${delimiter}\n`);
+                  }
+                  NODE
 
             - name: Download and build tool
               id: build
@@ -217,6 +229,15 @@ jobs:
                   fi
 
             - name: Build tool metadata JSON
+              env:
+                  INPUT_PACKAGE: ${{ steps.tool.outputs.package }}
+                  INPUT_NAME: ${{ steps.tool.outputs.name }}
+                  INPUT_DESCRIPTION: ${{ steps.tool.outputs.description }}
+                  INPUT_AUTHORS: ${{ steps.tool.outputs.authors }}
+                  INPUT_README_URL: ${{ steps.tool.outputs.readme_url }}
+                  INPUT_REPOSITORY: ${{ steps.tool.outputs.repository }}
+                  INPUT_WEBSITE: ${{ steps.tool.outputs.website }}
+                  INPUT_MIN_API: ${{ steps.tool.outputs.minAPI }}
               run: |
                   set -euo pipefail
 
@@ -231,19 +252,19 @@ jobs:
                   TOOL_METADATA_JSON=$(jq -c -n \
                     --arg tool_id "${TOOL_ID}" \
                     --arg tool_version "${TOOL_VERSION}" \
-                    --arg packageName "${{ steps.tool.outputs.package }}" \
-                    --arg name "${{ steps.tool.outputs.name }}" \
-                    --arg description "${{ steps.tool.outputs.description }}" \
-                    --arg authors "${{ steps.tool.outputs.authors }}" \
-                    --arg readme_url "${{ steps.tool.outputs.readme_url }}" \
+                    --arg packageName "$INPUT_PACKAGE" \
+                    --arg name "$INPUT_NAME" \
+                    --arg description "$INPUT_DESCRIPTION" \
+                    --arg authors "$INPUT_AUTHORS" \
+                    --arg readme_url "$INPUT_README_URL" \
                     --arg icon "$ICON_URL" \
                     --arg downloadurl "$DOWNLOAD_URL" \
                     --arg checksum "${{ steps.checksum.outputs.checksum }}" \
                     --arg size "${{ steps.checksum.outputs.size }}" \
-                    --arg repository "${{ steps.tool.outputs.repository }}" \
-                    --arg website "${{ steps.tool.outputs.website }}" \
+                    --arg repository "$INPUT_REPOSITORY" \
+                    --arg website "$INPUT_WEBSITE" \
                     --arg published "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-                    --arg min_api "${{ steps.tool.outputs.minAPI }}" \
+                    --arg min_api "$INPUT_MIN_API" \
                     '{
                       tool_id: $tool_id,
                       tool_version: $tool_version,
@@ -314,6 +335,16 @@ jobs:
                   INPUT_FEATURES: ${{ inputs.features }}
                   INPUT_CSP_EXCEPTIONS: ${{ inputs.csp_exceptions }}
                   PPTB_CONFIG_JSON: ${{ steps.pptb_config.outputs.json }}
+                  TOOL_PACKAGENAME: ${{ steps.tool.outputs.package }}
+                  TOOL_NAME: ${{ steps.tool.outputs.name }}
+                  TOOL_DESCRIPTION: ${{ steps.tool.outputs.description }}
+                  TOOL_LICENSE: ${{ inputs.license }}
+                  TOOL_REPOSITORY: ${{ steps.tool.outputs.repository }}
+                  TOOL_WEBSITE: ${{ steps.tool.outputs.website }}
+                  TOOL_MIN_API: ${{ steps.tool.outputs.minAPI }}
+                  TOOL_SUBMITTED_BY: ${{ inputs.submitted_by }}
+                  TOOL_READMEURL: ${{ steps.tool.outputs.readme_url }}
+                  INPUT_AUTHORS: ${{ steps.tool.outputs.authors }}
               if: env.SUPABASE_URL != '' && env.SUPABASE_SERVICE_ROLE_KEY != ''
               run: |
                   set -euo pipefail
@@ -399,21 +430,12 @@ jobs:
 
                   # Publish tool identity, release metadata and package features atomically
                   # through the restricted publish_tool_release RPC (see supabase/sql/publish_tool_release.sql).
-                  PUBLISH_OUTPUT=$(TOOL_PACKAGENAME="${{ steps.tool.outputs.package }}" \
-                    TOOL_NAME="${{ steps.tool.outputs.name }}" \
-                    TOOL_DESCRIPTION="${{ steps.tool.outputs.description }}" \
-                    TOOL_LICENSE="${{ inputs.license }}" \
-                    TOOL_REPOSITORY="${{ steps.tool.outputs.repository }}" \
-                    TOOL_WEBSITE="${{ steps.tool.outputs.website }}" \
-                    TOOL_MIN_API="${{ steps.tool.outputs.minAPI }}" \
-                    TOOL_SUBMITTED_BY="${{ inputs.submitted_by }}" \
-                    TOOL_CSP_EXCEPTIONS="$CSP_JSON" \
+                  PUBLISH_OUTPUT=$(TOOL_CSP_EXCEPTIONS="$CSP_JSON" \
                     TOOL_VERSION="${{ steps.build.outputs.version }}" \
                     TOOL_DOWNLOAD="$BLOB_DOWNLOAD_URL" \
                     TOOL_ICON="$ICON_URL" \
                     TOOL_CHECKSUM="${{ steps.checksum.outputs.checksum }}" \
                     TOOL_SIZE="${{ steps.checksum.outputs.size }}" \
-                    TOOL_READMEURL="${{ steps.tool.outputs.readme_url }}" \
                     TOOL_PUBLISHED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
                     TOOL_FEATURES="$FEATURES_JSON" \
                     TOOL_PPTB_CONFIG="$PPTB_CONFIG_JSON" \
@@ -446,11 +468,11 @@ jobs:
                     
                     echo "Analytics initialized for tool"
 
-                    AUTHOR_LIST="${{ steps.tool.outputs.authors }}"
+                    AUTHOR_LIST="$INPUT_AUTHORS"
                     if [ -n "$AUTHOR_LIST" ]; then
                       IFS=',' read -ra AUTHORS <<< "$AUTHOR_LIST"
                       for RAW_AUTHOR in "${AUTHORS[@]}"; do
-                        AUTHOR_NAME=$(echo "$RAW_AUTHOR" | xargs)
+                        AUTHOR_NAME=$(printf '%s' "$RAW_AUTHOR" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
                         if [ -z "$AUTHOR_NAME" ]; then
                           continue
                         fi
