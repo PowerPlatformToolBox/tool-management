@@ -192,7 +192,7 @@ class PublishClient {
 
     // Calls the restricted RPC so tool identity, release metadata, package features
     // and the current-release pointer are written atomically in one transaction.
-    async rpc(name, payload) {
+    async rpc(name, args) {
         return this.request(`${this.config.supabaseUrl}/rest/v1/rpc/${name}`, {
             method: "POST",
             headers: {
@@ -201,7 +201,7 @@ class PublishClient {
                 "Content-Type": "application/json",
                 Prefer: "return=representation",
             },
-            body: JSON.stringify({ payload }),
+            body: JSON.stringify(args),
         });
     }
 }
@@ -238,10 +238,25 @@ function loadConfig(environment = process.env) {
 }
 
 async function main() {
+    const intakeId = process.env.TOOL_INTAKE_ID;
+    const intakeRevision = process.env.TOOL_INTAKE_REVISION;
+    if (process.argv.includes("--check-intake")) {
+        const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, TOOL_PACKAGENAME, TOOL_VERSION } = process.env;
+        if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY || !intakeId || !intakeRevision || !TOOL_PACKAGENAME || !TOOL_VERSION) {
+            throw new Error("Approved intake preflight requires Supabase credentials, intake ID and revision, and exact package and version");
+        }
+        const client = new PublishClient({ supabaseUrl: SUPABASE_URL.replace(/\/$/, ""), supabaseKey: SUPABASE_SERVICE_ROLE_KEY });
+        await client.rpc("check_tool_intake_publish", { p_intake_id: intakeId, p_revision: intakeRevision, p_package: TOOL_PACKAGENAME, p_version: TOOL_VERSION });
+        return;
+    }
+
     const config = loadConfig();
     const payload = buildReleasePayload(config.fields);
     const client = new PublishClient(config);
-    const response = await client.rpc("publish_tool_release", payload);
+    if (Boolean(intakeId) !== Boolean(intakeRevision)) throw new Error("Intake publishing requires both intake ID and revision");
+    const response = intakeId
+        ? await client.rpc("publish_tool_intake_release", { payload: { ...payload, intake_id: intakeId, intake_revision: intakeRevision } })
+        : await client.rpc("publish_tool_release", { payload });
     const result = Array.isArray(response) ? response[0] : response;
 
     console.log(`RESULT_JSON:${JSON.stringify(result || {})}`);

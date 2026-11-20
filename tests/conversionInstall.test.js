@@ -7,7 +7,7 @@ const path = require("node:path");
 
 test("convert-tool.yml extracts quoted and multiline inputs without shell interpolation", () => {
     const source = readFileSync(path.join(__dirname, "../.github/workflows/convert-tool.yml"), "utf8");
-    const step = source.split("- name: Extract tool info\n")[1].split("- name: Download and build tool\n")[0];
+    const step = source.split("- name: Extract tool info\n")[1].split("- name: Check approved intake\n")[0];
     const script = step.split("run: |\n")[1].replace(/^ {18}/gm, "").trim();
     assert.equal(script.includes("${{"), false);
     const inputs = {
@@ -53,8 +53,9 @@ test("convert-tool.yml extracts quoted and multiline inputs without shell interp
 test("convert-tool.yml keeps metadata values out of downstream shell source", () => {
     const source = readFileSync(path.join(__dirname, "../.github/workflows/convert-tool.yml"), "utf8");
     const metadataStep = source.split("- name: Build tool metadata JSON\n")[1]
+        .split("- name: Detect pptb.config\n")[0];
+    const publishStep = source.split("- name: Update Supabase database\n")[1]
         .split("- name: Regenerate Azure Blob registry.json\n")[0];
-    const publishStep = source.split("- name: Update Supabase database\n")[1];
     for (const step of [metadataStep, publishStep]) {
         assert.doesNotMatch(step.split("run: |\n")[1], /\$\{\{\s*(steps\.tool\.outputs|inputs)\./);
     }
@@ -90,14 +91,43 @@ test("convert-tool.yml keeps metadata values out of downstream shell source", ()
         assert.match(publishStep, /TOOL_DESCRIPTION: \$\{\{ steps\.tool\.outputs\.description \}\}/);
         assert.match(publishStep, /TOOL_LICENSE: \$\{\{ inputs\.license \}\}/);
         assert.match(publishStep, /TOOL_SUBMITTED_BY: \$\{\{ inputs\.submitted_by \}\}/);
-        assert.match(publishStep, /INPUT_AUTHORS: \$\{\{ steps\.tool\.outputs\.authors \}\}/);
-        const trimAuthor = publishStep.match(/^\s*(AUTHOR_NAME=.*)$/m)?.[1];
-        assert.ok(trimAuthor);
-        const author = execFileSync("bash", ["-e", "-c", `${trimAuthor}\nprintf '%s' "$AUTHOR_NAME"`], {
-            env: { ...process.env, RAW_AUTHOR: "  O'Brien  " },
-            encoding: "utf8",
-        });
-        assert.equal(author, "O'Brien");
+        assert.match(publishStep, /TOOL_INTAKE_ID: \$\{\{ inputs\.intake_id \}\}/);
+        assert.match(publishStep, /TOOL_INTAKE_REVISION: \$\{\{ inputs\.intake_revision \}\}/);
+    } finally {
+        rmSync(directory, { recursive: true, force: true });
+    }
+});
+
+test("intake conversion packs the approved version and rejects a different manifest before install", () => {
+    const source = readFileSync(path.join(__dirname, "../.github/workflows/convert-tool.yml"), "utf8");
+    const step = source.split("- name: Download approved npm version and verify manifest\n")[1].split("- name: Set tool environment\n")[0];
+    const script = step.split("run: |\n")[1].replace(/^ {18}/gm, "").trim();
+    assert.ok(source.indexOf("- name: Update Supabase database") < source.indexOf("- name: Regenerate Azure Blob registry.json"));
+    const directory = mkdtempSync(path.join(tmpdir(), "tool-approved-version-"));
+    try {
+        mkdirSync(path.join(directory, "fixture", "package"), { recursive: true });
+        writeFileSync(path.join(directory, "npm"), `#!/bin/bash
+set -e
+if [[ "$1" == "pack" ]]; then
+    [[ "$#" == 4 && "$2" == "--ignore-scripts" && "$3" == "--" && "$4" == "@scope/tool@1.1.0" ]]
+    tar -czf tool.tgz -C fixture package
+elif [[ "$1" == "install" ]]; then
+    touch "$INSTALL_MARKER"
+fi
+`, { mode: 0o755 });
+        const environment = {
+            ...process.env, PATH: `${directory}:${process.env.PATH}`, TOOL_PACKAGE: "@scope/tool", APPROVED_VERSION: "1.1.0",
+            GITHUB_OUTPUT: path.join(directory, "outputs"), INSTALL_MARKER: path.join(directory, "installed"),
+        };
+        const manifest = path.join(directory, "fixture", "package", "package.json");
+        writeFileSync(manifest, JSON.stringify({ name: "@scope/tool", version: "1.2.0" }));
+        const run = () => execFileSync("bash", ["-c", script], { cwd: directory, env: environment, stdio: "pipe" });
+        assert.throws(run, /manifest does not match the approved npm package and version/);
+        assert.equal(existsSync(environment.INSTALL_MARKER), false);
+        writeFileSync(manifest, JSON.stringify({ name: "@scope/tool", version: "1.1.0" }));
+        run();
+        assert.match(readFileSync(environment.GITHUB_OUTPUT, "utf8"), /^version=1\.1\.0$/m);
+        assert.equal(existsSync(environment.INSTALL_MARKER), true);
     } finally {
         rmSync(directory, { recursive: true, force: true });
     }
